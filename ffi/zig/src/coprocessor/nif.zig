@@ -321,16 +321,17 @@ fn nif_dsp_mix(env: ?*ErlNifEnv, _: c_int, _ : [*c]const ERL_NIF_TERM) callconv(
 // ---------------------------------------------------------------------------
 
 fn nif_neural_init_model(env: ?*ErlNifEnv, _: c_int, _ : [*c]const ERL_NIF_TERM) callconv(.c) ERL_NIF_TERM {
-    // Allocate a DenoiserState on the NIF resource and return a reference.
-    // For now, return an opaque binary containing the state struct.
+    // Serialize the initial denoiser state to a portable binary format.
+    // No unsafe pointer casts — uses explicit byte-level serialization.
     const state = neural.DenoiserState.init();
 
     var bin: ErlNifBinary = undefined;
-    if (c.enif_alloc_binary(@sizeOf(neural.DenoiserState), &bin) == 0)
+    if (c.enif_alloc_binary(neural.DenoiserState.SERIALIZED_SIZE, &bin) == 0)
         return make_error(env, "alloc_failed");
 
-    const state_ptr: *neural.DenoiserState = @ptrCast(@alignCast(bin.data));
-    state_ptr.* = state;
+    var out_buf: [neural.DenoiserState.SERIALIZED_SIZE]u8 = undefined;
+    state.serialize(&out_buf);
+    @memcpy(bin.data[0..neural.DenoiserState.SERIALIZED_SIZE], &out_buf);
 
     return make_ok(env, c.enif_make_binary(env, &bin));
 }
@@ -350,24 +351,27 @@ fn nif_neural_denoise(env: ?*ErlNifEnv, _: c_int, argv: [*c]const ERL_NIF_TERM) 
     var pcm: [960]f32 = undefined;
     _ = get_float_list(env, argv[0], &pcm) orelse return make_error(env, "bad_pcm_values");
 
-    // Get model state from binary.
+    // Get model state from binary — safe deserialization, no pointer casts.
     var state_bin: ErlNifBinary = undefined;
     if (c.enif_inspect_binary(env, argv[2], &state_bin) == 0) return make_error(env, "bad_state");
-    if (state_bin.size != @sizeOf(neural.DenoiserState)) return make_error(env, "invalid_state_size");
+    if (state_bin.size != neural.DenoiserState.SERIALIZED_SIZE) return make_error(env, "invalid_state_size");
 
-    // Copy state (don't mutate the input binary).
-    var state: neural.DenoiserState = @as(*const neural.DenoiserState, @ptrCast(@alignCast(state_bin.data))).*;
+    // Deserialize state from portable binary format.
+    var state_bytes: [neural.DenoiserState.SERIALIZED_SIZE]u8 = undefined;
+    @memcpy(&state_bytes, state_bin.data[0..neural.DenoiserState.SERIALIZED_SIZE]);
+    var state = neural.DenoiserState.deserialize(&state_bytes);
 
     var output: [960]f32 = undefined;
     neural.denoise_frame(&pcm, &output, &state);
 
-    // Return {ok, {pcm_list, updated_state_binary}}.
+    // Serialize updated state back to binary.
     var new_state_bin: ErlNifBinary = undefined;
-    if (c.enif_alloc_binary(@sizeOf(neural.DenoiserState), &new_state_bin) == 0)
+    if (c.enif_alloc_binary(neural.DenoiserState.SERIALIZED_SIZE, &new_state_bin) == 0)
         return make_error(env, "alloc_failed");
 
-    const new_state_ptr: *neural.DenoiserState = @ptrCast(@alignCast(new_state_bin.data));
-    new_state_ptr.* = state;
+    var new_state_bytes: [neural.DenoiserState.SERIALIZED_SIZE]u8 = undefined;
+    state.serialize(&new_state_bytes);
+    @memcpy(new_state_bin.data[0..neural.DenoiserState.SERIALIZED_SIZE], &new_state_bytes);
 
     const pcm_term = make_float_list(env, &output);
     const state_term = c.enif_make_binary(env, &new_state_bin);

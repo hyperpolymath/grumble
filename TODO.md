@@ -40,8 +40,12 @@
 - [x] Audit log compressed export (JSONL + zstd, 12x ratio on JSON)
 - [x] Zig NIF for LZ4 compress/decompress (3µs vs 83ms = 26,350x speedup)
 - [ ] Wire dsp_mix NIF (complex list-of-lists marshalling)
+- [x] panic-attack assail: fixed 3 unsafe pointer casts (serialization)
+- [x] proven integration: crypto, password, UUID, email, path via verified bridge
+- [x] Ephapax linear analysis: 3 opportunities documented (pipeline, E2EE keys, jitter buffer)
 - [ ] RNNoise-style neural model (Phase 2 — replace spectral gating)
 - [ ] Compile Zig NIFs in mix compile hook (auto-build on deps.get)
+- [ ] Ephapax WASM pipeline module (Phase 2 — linear-typed frame processing)
 
 ### VeriSimDB integration (dogfooding)
 - [x] Replace PostgreSQL/Ecto with VeriSimDB for user accounts

@@ -58,7 +58,7 @@ defmodule Burble.Auth do
 
   @doc "Create a guest session (anonymous, limited permissions)."
   def create_guest_session(display_name) do
-    guest_id = "guest_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    guest_id = "guest_" <> Base.encode16(Burble.Safety.ProvenBridge.secure_random(8), case: :lower)
 
     {:ok,
      %{
@@ -76,7 +76,7 @@ defmodule Burble.Auth do
   temporal modality.
   """
   def generate_magic_link(email) do
-    token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
+    token = Base.url_encode64(Burble.Safety.ProvenBridge.secure_random(32), padding: false)
     Store.store_magic_link(token, email)
   end
 
@@ -99,7 +99,7 @@ defmodule Burble.Auth do
   def generate_invite_token(server_id, opts \\ []) do
     max_uses = Keyword.get(opts, :max_uses, 1)
     expires_in = Keyword.get(opts, :expires_in, 86_400)
-    token = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+    token = Base.url_encode64(Burble.Safety.ProvenBridge.secure_random(16), padding: false)
 
     invite = %{
       token: token,

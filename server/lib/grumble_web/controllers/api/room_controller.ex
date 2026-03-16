@@ -42,11 +42,8 @@ defmodule BurbleWeb.API.RoomController do
     end
   end
 
-  # Generate a v4 UUID without Ecto dependency.
+  # Generate a v4 UUID via proven (formally verified) or stdlib fallback.
   defp generate_uuid do
-    <<a::48, _::4, b::12, _::2, c::62>> = :crypto.strong_rand_bytes(16)
-    <<a::48, 4::4, b::12, 2::2, c::62>>
-    |> Base.encode16(case: :lower)
-    |> String.replace(~r/(.{8})(.{4})(.{4})(.{4})(.{12})/, "\\1-\\2-\\3-\\4-\\5")
+    Burble.Safety.ProvenBridge.uuid_v4()
   end
 end

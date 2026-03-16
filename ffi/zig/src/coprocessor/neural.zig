@@ -44,6 +44,60 @@ pub const DenoiserState = struct {
             .initialised = false,
         };
     }
+
+    /// Serialized size in bytes (portable, no alignment dependency).
+    /// Layout: noise_floor (481 * 4) + frame_count (8) + alpha (4) + initialised (1) = 1937
+    pub const SERIALIZED_SIZE: usize = (FRAME_SIZE / 2 + 1) * 4 + 8 + 4 + 1;
+
+    /// Serialize state to a byte buffer (safe, no pointer casts).
+    pub fn serialize(self: *const DenoiserState, out: *[SERIALIZED_SIZE]u8) void {
+        var pos: usize = 0;
+
+        // Noise floor bins (f32 LE each).
+        for (self.noise_floor) |nf| {
+            const bytes = @as([4]u8, @bitCast(nf));
+            out[pos..][0..4].* = bytes;
+            pos += 4;
+        }
+
+        // Frame count (u64 LE).
+        const fc_bytes = std.mem.toBytes(std.mem.nativeToLittle(u64, self.frame_count));
+        out[pos..][0..8].* = fc_bytes;
+        pos += 8;
+
+        // Alpha (f32 LE).
+        const alpha_bytes = @as([4]u8, @bitCast(self.alpha));
+        out[pos..][0..4].* = alpha_bytes;
+        pos += 4;
+
+        // Initialised (1 byte).
+        out[pos] = if (self.initialised) 1 else 0;
+    }
+
+    /// Deserialize state from a byte buffer (safe, no pointer casts).
+    pub fn deserialize(data: *const [SERIALIZED_SIZE]u8) DenoiserState {
+        var state: DenoiserState = undefined;
+        var pos: usize = 0;
+
+        // Noise floor bins.
+        for (&state.noise_floor) |*nf| {
+            nf.* = @bitCast(data[pos..][0..4].*);
+            pos += 4;
+        }
+
+        // Frame count.
+        state.frame_count = std.mem.littleToNative(u64, @as(u64, @bitCast(data[pos..][0..8].*)));
+        pos += 8;
+
+        // Alpha.
+        state.alpha = @bitCast(data[pos..][0..4].*);
+        pos += 4;
+
+        // Initialised.
+        state.initialised = data[pos] != 0;
+
+        return state;
+    }
 };
 
 /// Frame size in samples (20ms at 48kHz).

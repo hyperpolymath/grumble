@@ -62,6 +62,9 @@ defmodule Burble.MixProject do
       # Persistent store — VeriSimDB (dogfooding)
       {:verisim_client, path: "../../nextgen-databases/verisimdb/connectors/clients/elixir"},
 
+      # Formally verified safety functions (Idris2 core via Zig FFI)
+      {:proven, path: "../../proven/bindings/elixir"},
+
       # Telemetry and observability
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.1"},

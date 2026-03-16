@@ -57,6 +57,8 @@ defmodule Burble.Auth.User do
     display_name = Map.get(attrs, :display_name) || Map.get(attrs, "display_name")
     password = Map.get(attrs, :password) || Map.get(attrs, "password")
 
+    alias Burble.Safety.ProvenBridge
+
     errors =
       []
       |> validate_required(:email, email)
@@ -65,6 +67,8 @@ defmodule Burble.Auth.User do
       |> validate_email_format(email)
       |> validate_length(:display_name, display_name, 1, 32)
       |> validate_length(:password, password, 8, 128)
+      |> validate_password_strength(password)
+      |> validate_not_common_password(password)
 
     if errors == [] do
       {:ok,
@@ -123,6 +127,24 @@ defmodule Burble.Auth.User do
     end
   end
   defp validate_length(errors, _field, _val, _min, _max), do: errors
+
+  defp validate_password_strength(errors, nil), do: errors
+  defp validate_password_strength(errors, password) when is_binary(password) do
+    case Burble.Safety.ProvenBridge.validate_password_strength(password) do
+      {:ok, _} -> errors
+      {:error, {:too_weak, level}} -> [{:password, "too weak (#{level})"} | errors]
+      {:error, _} -> [{:password, "does not meet strength requirements"} | errors]
+    end
+  end
+  defp validate_password_strength(errors, _), do: errors
+
+  defp validate_not_common_password(errors, nil), do: errors
+  defp validate_not_common_password(errors, password) when is_binary(password) do
+    if Burble.Safety.ProvenBridge.common_password?(password),
+      do: [{:password, "is a commonly used password"} | errors],
+      else: errors
+  end
+  defp validate_not_common_password(errors, _), do: errors
 
   # Group errors by field name into a map (mirrors Ecto.Changeset.traverse_errors output).
   defp errors_to_map(errors) do

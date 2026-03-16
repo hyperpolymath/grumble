@@ -59,8 +59,14 @@ defmodule GrumbleWeb.Router do
     end
   end
 
+  # Serve the MVP web client at root
+  scope "/", GrumbleWeb do
+    pipe_through :browser
+    get "/", PageController, :index
+  end
+
   @doc false
-  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
+  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt index.html)
 end
 
 defmodule GrumbleWeb do

@@ -180,12 +180,41 @@ defmodule Burble.Media.Engine do
         {:reply, {:error, :no_session}, state}
 
       session ->
+        e2ee_enabled = session.privacy_mode in [:e2ee, :maximum]
+        e2ee_key = if e2ee_enabled, do: Keyword.get(opts, :e2ee_key), else: nil
+
         peer = %{
           id: peer_id,
           joined_at: DateTime.utc_now(),
           muted: Keyword.get(opts, :muted, false),
-          e2ee_enabled: session.privacy_mode in [:e2ee, :maximum]
+          e2ee_enabled: e2ee_enabled
         }
+
+        # Start a coprocessor pipeline for this peer.
+        pipeline_opts = [
+          peer_id: peer_id,
+          e2ee_key: e2ee_key,
+          config: %{
+            sample_rate: session.config.sample_rate,
+            channels: session.config.channels,
+            bitrate: session.config.bitrate_kbps * 1000,
+            noise_gate_db: -40.0,
+            echo_cancel_taps: 128,
+            e2ee_enabled: e2ee_enabled,
+            neural_denoise: true
+          }
+        ]
+
+        case DynamicSupervisor.start_child(
+               Burble.CoprocessorSupervisor,
+               {Burble.Coprocessor.Pipeline, pipeline_opts}
+             ) do
+          {:ok, _pid} ->
+            Logger.info("[Media] Pipeline started for peer #{peer_id}")
+
+          {:error, reason} ->
+            Logger.warning("[Media] Pipeline failed for peer #{peer_id}: #{inspect(reason)}")
+        end
 
         updated_session = %{session | peers: Map.put(session.peers, peer_id, peer)}
         new_sessions = Map.put(state.sessions, room_id, updated_session)
@@ -205,6 +234,12 @@ defmodule Burble.Media.Engine do
         {:reply, {:error, :no_session}, state}
 
       session ->
+        # Stop the coprocessor pipeline for this peer.
+        case Registry.lookup(Burble.CoprocessorRegistry, peer_id) do
+          [{pid, _}] -> Burble.Coprocessor.Pipeline.stop(pid)
+          _ -> :ok
+        end
+
         updated_session = %{session | peers: Map.delete(session.peers, peer_id)}
         new_sessions = Map.put(state.sessions, room_id, updated_session)
         Logger.info("[Media] Peer removed: #{peer_id} ← #{room_id}")

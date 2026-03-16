@@ -8,20 +8,23 @@
 #
 # Current dispatch table (to be updated with real benchmarks):
 #
-#   Audio encode/decode    → Zig (codec operations are CPU-bound, SIMD helps)
-#   Audio noise gate       → Elixir (simple threshold, no benefit from SIMD at typical frame sizes)
-#   Audio echo cancel      → Zig (NLMS adaptive filter is compute-intensive)
-#   Crypto encrypt/decrypt → Elixir (delegates to Erlang :crypto which uses OpenSSL/BoringSSL)
-#   Crypto hash chain      → Elixir (same — Erlang :crypto is already native)
-#   Crypto derive key      → Elixir (same)
-#   I/O jitter buffer      → Elixir (data structure operations, not compute-bound)
-#   I/O conceal loss       → Elixir (simple operations)
-#   I/O adaptive bitrate   → Elixir (trivial arithmetic)
-#   DSP FFT/IFFT           → Zig (classic SIMD workload)
-#   DSP convolve           → Zig (O(n*m) multiply-accumulate)
-#   DSP mix                → Zig (matrix multiply)
-#   Neural denoise         → Zig (ML inference is the canonical Zig use case)
-#   Neural classify        → Elixir (simple heuristic, no ML model yet)
+# Benchmark results (2026-03-16, Zig 0.15, Erlang/OTP 28, 960-sample frames):
+#
+#   Audio encode           → Zig  (5.7x faster:  14µs vs 81µs)
+#   Audio decode           → Zig  (4.7x faster:  21µs vs 99µs)
+#   Audio noise gate       → Zig  (1.2x faster:  27µs vs 32µs — marginal)
+#   Audio echo cancel      → Zig  (62.6x faster: 310µs vs 19.4ms — CRITICAL)
+#   Crypto encrypt/decrypt → Elixir (Erlang :crypto is native OpenSSL — 2µs)
+#   Crypto hash chain      → Elixir (same — 2µs)
+#   Crypto derive key      → Elixir (same — 5µs)
+#   I/O jitter buffer      → Elixir (data structure ops — <1µs)
+#   I/O conceal loss       → Elixir (simple ops)
+#   I/O adaptive bitrate   → Elixir (trivial arithmetic — <1µs)
+#   DSP FFT (256)          → Zig  (37x faster:   22µs vs 826µs)
+#   DSP convolve (64x32)   → Zig  (28x faster:   11µs vs 311µs)
+#   DSP mix                → Elixir (Zig NIF not wired for complex marshalling)
+#   Neural denoise         → Zig  (6.7x faster:  8µs vs 54µs)
+#   Neural classify        → Elixir (simple heuristic — 190µs)
 
 defmodule Burble.Coprocessor.SmartBackend do
   @moduledoc """
@@ -74,8 +77,8 @@ defmodule Burble.Coprocessor.SmartBackend do
 
   @impl true
   def audio_noise_gate(pcm, threshold_db) do
-    # Simple threshold — Elixir is fine.
-    always_elixir().audio_noise_gate(pcm, threshold_db)
+    # 1.2x Zig advantage — marginal but consistent.
+    zig_or_elixir().audio_noise_gate(pcm, threshold_db)
   end
 
   @impl true

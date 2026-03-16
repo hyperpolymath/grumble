@@ -81,7 +81,7 @@ defmodule Burble.Coprocessor.ZigBackend do
   end
 
   # NIF stub — replaced by Zig implementation when loaded.
-  defp nif_available, do: false
+  def nif_available, do: false
 
   # ---------------------------------------------------------------------------
   # Audio kernel — NIF stubs (fallback to Elixir)
@@ -225,13 +225,13 @@ defmodule Burble.Coprocessor.ZigBackend do
   # NIF function stubs — replaced when .so is loaded
   # ---------------------------------------------------------------------------
 
-  defp nif_audio_encode(_pcm, _sr, _ch, _br), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_audio_decode(_frame, _sr, _ch), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_audio_echo_cancel(_cap, _ref, _fl), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_dsp_fft(_signal, _size), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_dsp_ifft(_spectrum, _size), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_dsp_convolve(_a, _b), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_dsp_mix(_streams, _matrix), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_neural_init_model(_sr), do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_neural_denoise(_pcm, _sr, _state), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_audio_encode(_pcm, _sr, _ch, _br), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_audio_decode(_frame, _sr, _ch), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_audio_echo_cancel(_cap, _ref, _fl), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_dsp_fft(_signal, _size), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_dsp_ifft(_spectrum, _size), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_dsp_convolve(_a, _b), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_dsp_mix(_streams, _matrix), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_neural_init_model(_sr), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_neural_denoise(_pcm, _sr, _state), do: :erlang.nif_error(:nif_not_loaded)
 end

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 //
-// Burble Coprocessor — Zig build configuration.
+// Burble Coprocessor — Zig 0.15 build configuration.
 //
 // Compiles SIMD-accelerated audio processing kernels as Erlang NIFs.
 // The output shared library is loaded by Burble.Coprocessor.ZigBackend.
@@ -13,7 +13,7 @@
 //   zig-out/lib/libburble_coprocessor.dylib (macOS)
 //
 // Install to priv/:
-//   cp zig-out/lib/libburble_coprocessor.* ../server/priv/burble_coprocessor.*
+//   cp zig-out/lib/libburble_coprocessor.so ../../server/priv/burble_coprocessor.so
 
 const std = @import("std");
 
@@ -21,33 +21,41 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Main shared library (Erlang NIF).
-    const lib = b.addSharedLibrary(.{
-        .name = "burble_coprocessor",
+    // Erlang NIF header include path.
+    const erl_include = b.option(
+        []const u8,
+        "erl-include",
+        "Path to Erlang NIF headers (directory containing erl_nif.h)",
+    ) orelse "/var/mnt/eclipse/hyper-data/toolchains/asdf/installs/erlang/28.3.1/erts-16.2/include";
+
+    // Root module for the NIF shared library.
+    const nif_mod = b.createModule(.{
         .root_source_file = b.path("src/coprocessor/nif.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    nif_mod.addIncludePath(.{ .cwd_relative = erl_include });
+
+    // Build as shared library (Erlang NIF).
+    const lib = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "burble_coprocessor",
+        .root_module = nif_mod,
+    });
+
+    b.installArtifact(lib);
+
+    // Unit tests.
+    const test_mod = b.createModule(.{
+        .root_source_file = b.path("test/coprocessor_test.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    // Link with Erlang NIF headers.
-    // ERL_INTERFACE_DIR is set by mix at compile time.
-    if (std.process.getEnvVarOwned(b.allocator, "ERL_EI_INCLUDE_DIR")) |dir| {
-        lib.addIncludePath(.{ .cwd_relative = dir });
-        b.allocator.free(dir);
-    } else |_| {
-        // Fallback: try common Erlang NIF header locations.
-        lib.addIncludePath(.{ .cwd_relative = "/usr/lib/erlang/usr/include" });
-        lib.addIncludePath(.{ .cwd_relative = "/usr/local/lib/erlang/usr/include" });
-    }
-
-    lib.linkLibC();
-    b.installArtifact(lib);
-
-    // Unit tests.
     const tests = b.addTest(.{
-        .root_source_file = b.path("test/coprocessor_test.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = test_mod,
     });
 
     const run_tests = b.addRunArtifact(tests);

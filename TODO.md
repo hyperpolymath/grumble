@@ -29,11 +29,15 @@
 - [x] DSP kernel: Cooley-Tukey FFT/IFFT, direct convolution, mixing matrix
 - [x] Idris2 ABI definitions (Types.idr, Foreign.idr — dependent type proofs)
 - [x] Zig FFI source (audio.zig, dsp.zig, neural.zig — SIMD implementations)
-- [ ] Wire NIF entry points in nif.zig (Erlang NIF boilerplate)
-- [ ] Compile Zig NIFs and verify NIF loading in ZigBackend
-- [ ] Benchmark ElixirBackend vs ZigBackend, update SmartBackend dispatch table
-- [ ] Wire Pipeline into Media.Engine (per-peer pipeline lifecycle)
+- [x] Wire NIF entry points in nif.zig (10 NIF functions, full term marshalling)
+- [x] Compile Zig NIFs (76KB ReleaseFast, Zig 0.15.2)
+- [x] Benchmark ElixirBackend vs ZigBackend (echo_cancel 62x, FFT 37x, convolve 28x)
+- [x] Update SmartBackend dispatch table from real benchmarks
+- [x] Wire Pipeline into Media.Engine (per-peer lifecycle on add/remove)
+- [x] mix bench.coprocessor task
+- [ ] Wire dsp_mix NIF (complex list-of-lists marshalling)
 - [ ] RNNoise-style neural model (Phase 2 — replace spectral gating)
+- [ ] Compile Zig NIFs in mix compile hook (auto-build on deps.get)
 
 ### VeriSimDB integration (dogfooding)
 - [x] Replace PostgreSQL/Ecto with VeriSimDB for user accounts

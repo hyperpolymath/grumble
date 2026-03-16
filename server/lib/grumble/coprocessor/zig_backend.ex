@@ -222,6 +222,31 @@ defmodule Burble.Coprocessor.ZigBackend do
     do: ElixirBackend.neural_classify_noise(pcm, sample_rate)
 
   # ---------------------------------------------------------------------------
+  # Compression kernel — delegate to Elixir (Zig compression NIFs TODO)
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def compress_lz4(data), do: ElixirBackend.compress_lz4(data)
+
+  @impl true
+  def decompress_lz4(compressed, original_size),
+    do: ElixirBackend.decompress_lz4(compressed, original_size)
+
+  @impl true
+  def compress_zstd(data, level), do: ElixirBackend.compress_zstd(data, level)
+
+  @impl true
+  def decompress_zstd(compressed), do: ElixirBackend.decompress_zstd(compressed)
+
+  @impl true
+  def compress_audio_archive(frames, sample_rate, channels),
+    do: ElixirBackend.compress_audio_archive(frames, sample_rate, channels)
+
+  @impl true
+  def decompress_audio_frame(archive, frame_index),
+    do: ElixirBackend.decompress_audio_frame(archive, frame_index)
+
+  # ---------------------------------------------------------------------------
   # NIF function stubs — replaced when .so is loaded
   # ---------------------------------------------------------------------------
 

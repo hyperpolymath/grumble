@@ -131,6 +131,49 @@ defmodule Mix.Tasks.Bench.Coprocessor do
     end, nil)
 
     Mix.shell().info("")
+    Mix.shell().info("--- Compression Kernel ---")
+
+    # Generate test data: 1KB of PCM-like binary (simulates one frame).
+    pcm_binary = pcm |> Enum.map(fn s -> <<trunc(s * 32767)::signed-16>> end) |> IO.iodata_to_binary()
+
+    bench("compress_lz4 (1.9KB)", fn ->
+      ElixirBackend.compress_lz4(pcm_binary)
+    end, nil)
+
+    bench("decompress_lz4", fn ->
+      {:ok, compressed} = ElixirBackend.compress_lz4(pcm_binary)
+      ElixirBackend.decompress_lz4(compressed, byte_size(pcm_binary))
+    end, nil)
+
+    # Generate 10KB of JSON-like audit data (simulates audit export).
+    audit_json = Jason.encode!(for i <- 1..50, do: %{
+      event_type: "login_success",
+      user_id: "user_#{i}",
+      timestamp: DateTime.to_iso8601(DateTime.utc_now()),
+      metadata: %{ip: "192.168.1.#{rem(i, 255)}"}
+    })
+
+    bench("compress_zstd (audit)", fn ->
+      ElixirBackend.compress_zstd(audit_json, 3)
+    end, nil)
+
+    {:ok, compressed_audit} = ElixirBackend.compress_zstd(audit_json, 3)
+    audit_ratio = Float.round(byte_size(audit_json) / byte_size(compressed_audit), 1)
+    Mix.shell().info("    audit JSON: #{byte_size(audit_json)} bytes → #{byte_size(compressed_audit)} bytes (#{audit_ratio}x)")
+
+    bench("compress_audio_archive", fn ->
+      frames = for _ <- 1..10, do: pcm
+      ElixirBackend.compress_audio_archive(frames, 48_000, 1)
+    end, nil)
+
+    {:ok, archive} = ElixirBackend.compress_audio_archive(
+      (for _ <- 1..10, do: pcm), 48_000, 1
+    )
+    raw_audio = 10 * @frame_size * 4  # 10 frames * 960 samples * 4 bytes
+    archive_ratio = Float.round(raw_audio / byte_size(archive), 1)
+    Mix.shell().info("    audio archive: #{raw_audio} bytes → #{byte_size(archive)} bytes (#{archive_ratio}x)")
+
+    Mix.shell().info("")
     Mix.shell().info("=== Done ===")
   end
 

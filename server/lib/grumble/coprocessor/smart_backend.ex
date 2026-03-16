@@ -172,4 +172,41 @@ defmodule Burble.Coprocessor.SmartBackend do
     # Simple heuristic — Elixir is fine until we have a real ML model.
     always_elixir().neural_classify_noise(pcm, sample_rate)
   end
+
+  # ---------------------------------------------------------------------------
+  # Compression kernel — dispatch
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def compress_lz4(data) do
+    # LZ4 is byte-level sliding window — benefits from SIMD hash table.
+    zig_or_elixir().compress_lz4(data)
+  end
+
+  @impl true
+  def decompress_lz4(compressed, original_size) do
+    zig_or_elixir().decompress_lz4(compressed, original_size)
+  end
+
+  @impl true
+  def compress_zstd(data, level) do
+    # zstd is complex — Zig can use the real algorithm, Elixir falls back to zlib.
+    zig_or_elixir().compress_zstd(data, level)
+  end
+
+  @impl true
+  def decompress_zstd(compressed) do
+    zig_or_elixir().decompress_zstd(compressed)
+  end
+
+  @impl true
+  def compress_audio_archive(frames, sample_rate, channels) do
+    # Archive format uses LZ4 internally — Zig for the inner compression.
+    zig_or_elixir().compress_audio_archive(frames, sample_rate, channels)
+  end
+
+  @impl true
+  def decompress_audio_frame(archive, frame_index) do
+    zig_or_elixir().decompress_audio_frame(archive, frame_index)
+  end
 end

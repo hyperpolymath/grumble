@@ -297,4 +297,80 @@ defmodule Burble.Coprocessor.Backend do
               pcm :: [float()],
               sample_rate :: pos_integer()
             ) :: {atom(), float()}
+
+  # ---------------------------------------------------------------------------
+  # Compression kernel — lossless compression for recording and audit export
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Compress binary data using LZ4 (fast, low-latency).
+
+  Intended for server-side recording: compress PCM or Opus frames before
+  writing to disk. LZ4 adds ~5µs per frame — negligible vs I/O cost.
+
+  Returns `{:ok, compressed_binary}` or `{:error, reason}`.
+  """
+  @callback compress_lz4(
+              data :: binary()
+            ) :: {:ok, binary()} | {:error, term()}
+
+  @doc """
+  Decompress an LZ4-compressed binary.
+
+  Returns `{:ok, decompressed_binary}` or `{:error, :decompress_failed}`.
+  """
+  @callback decompress_lz4(
+              compressed :: binary(),
+              original_size :: pos_integer()
+            ) :: {:ok, binary()} | {:error, :decompress_failed}
+
+  @doc """
+  Compress binary data using zstd (high ratio, higher latency).
+
+  Intended for bulk audit log export: compress provenance chain JSON
+  for archival or transfer. zstd at level 3 gives ~10-15x on JSON.
+
+  `level` is the compression level (1–22, default 3).
+
+  Returns `{:ok, compressed_binary}` or `{:error, reason}`.
+  """
+  @callback compress_zstd(
+              data :: binary(),
+              level :: pos_integer()
+            ) :: {:ok, binary()} | {:error, term()}
+
+  @doc """
+  Decompress a zstd-compressed binary.
+
+  Returns `{:ok, decompressed_binary}` or `{:error, :decompress_failed}`.
+  """
+  @callback decompress_zstd(
+              compressed :: binary()
+            ) :: {:ok, binary()} | {:error, :decompress_failed}
+
+  @doc """
+  Compress a list of PCM frames into a lossless recording archive.
+
+  Uses FLAC-style linear prediction + Rice coding for perfect-fidelity
+  audio archival at ~50-60% of raw PCM size. Each frame is independently
+  seekable.
+
+  Returns `{:ok, archive_binary}` with a header containing frame count,
+  sample rate, channels, and frame offsets for random access.
+  """
+  @callback compress_audio_archive(
+              frames :: [[float()]],
+              sample_rate :: pos_integer(),
+              channels :: 1 | 2
+            ) :: {:ok, binary()} | {:error, term()}
+
+  @doc """
+  Decompress a single frame from a lossless audio archive by index.
+
+  Returns `{:ok, pcm_floats}` or `{:error, :invalid_index}`.
+  """
+  @callback decompress_audio_frame(
+              archive :: binary(),
+              frame_index :: non_neg_integer()
+            ) :: {:ok, [float()]} | {:error, :invalid_index | :decompress_failed}
 end

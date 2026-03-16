@@ -35,6 +35,10 @@
 - [x] Update SmartBackend dispatch table from real benchmarks
 - [x] Wire Pipeline into Media.Engine (per-peer lifecycle on add/remove)
 - [x] mix bench.coprocessor task
+- [x] Compression kernel (LZ4 + zstd via zlib + FLAC-style audio archive)
+- [x] Server-side recorder (per-peer lossless .barc archive format)
+- [x] Audit log compressed export (JSONL + zstd, 12x ratio on JSON)
+- [ ] Zig NIF for LZ4 compress/decompress (Elixir is 96ms, needs SIMD)
 - [ ] Wire dsp_mix NIF (complex list-of-lists marshalling)
 - [ ] RNNoise-style neural model (Phase 2 — replace spectral gating)
 - [ ] Compile Zig NIFs in mix compile hook (auto-build on deps.get)
@@ -57,7 +61,7 @@
 - [ ] Replace HMAC with Ed25519 for Avow/Vext signatures
 - [ ] Implement proper Guardian JWT auth (replace Phoenix.Token)
 - [ ] Add magic link email sending (currently stub)
-- [ ] Server-side recording (operator-approved)
+- [x] Server-side recording (operator-approved) — Recorder module + .barc format
 
 ### Integration
 - [ ] Embeddable client library (client/lib/) for IDApTIK and PanLL

@@ -33,6 +33,16 @@ client/web/deno.lock
 client/desktop/target/
 client/desktop/src-tauri/target/
 
+# Zig FFI build artifacts
+ffi/zig/zig-out/
+ffi/zig/zig-cache/
+ffi/zig/.zig-cache/
+server/priv/burble_coprocessor.*
+
+# Idris2 build artifacts
+src/abi/build/
+**/*.ibc
+
 # Build
 dist/
 *.beam

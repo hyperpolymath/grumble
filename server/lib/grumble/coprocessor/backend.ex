@@ -1,0 +1,300 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+#
+# Burble.Coprocessor.Backend — Abstract backend behaviour for audio kernels.
+#
+# Follows the Axiom.jl pattern: abstract backend → kernel interface → dispatch.
+# Each kernel operation is defined as a callback. Concrete backends implement
+# the callbacks using either pure Elixir (reference) or Zig FFI (hot path).
+#
+# The SmartBackend dispatches each operation to whichever backend is fastest,
+# measured by benchmarks (same approach as Axiom.jl's SmartBackend).
+#
+# Backend hierarchy:
+#   AbstractBackend (behaviour)
+#     ├── ElixirBackend    — pure Elixir reference implementation
+#     ├── ZigBackend       — Zig NIFs for hot-path operations
+#     └── SmartBackend     — dispatcher routing per-operation
+#
+# Kernel domains:
+#   Audio   — Opus encode/decode, noise suppression, echo cancellation
+#   Crypto  — AES-GCM frame encryption, Avow hash chains
+#   IO      — jitter buffer, packet loss concealment, adaptive bitrate
+#   DSP     — FFT, convolution, mixing matrix
+#   Neural  — ML-based noise suppression (keyboard/fan/dog removal)
+
+defmodule Burble.Coprocessor.Backend do
+  @moduledoc """
+  Abstract backend behaviour for Burble's coprocessor kernels.
+
+  Defines the kernel interface that all backends must implement.
+  Operations are grouped by domain (audio, crypto, io, dsp, neural)
+  and dispatched via `Burble.Coprocessor.SmartBackend` to the
+  fastest available implementation.
+
+  ## Implementing a new backend
+
+  ```elixir
+  defmodule MyBackend do
+    @behaviour Burble.Coprocessor.Backend
+
+    @impl true
+    def backend_type, do: :custom
+
+    @impl true
+    def available?, do: true
+
+    # ... implement all callbacks ...
+  end
+  ```
+  """
+
+  # ---------------------------------------------------------------------------
+  # Backend metadata
+  # ---------------------------------------------------------------------------
+
+  @doc "Atom identifying this backend type (:elixir, :zig, :smart)."
+  @callback backend_type() :: atom()
+
+  @doc "Whether this backend is available and initialised."
+  @callback available?() :: boolean()
+
+  # ---------------------------------------------------------------------------
+  # Audio kernel — Opus codec, noise gate, echo cancellation
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Encode a raw PCM audio frame to Opus.
+
+  ## Parameters
+    * `pcm` — Raw PCM samples as a list of floats (normalised -1.0..1.0)
+    * `sample_rate` — Sample rate in Hz (typically 48000)
+    * `channels` — Channel count (1 = mono, 2 = stereo)
+    * `bitrate` — Target bitrate in bits/sec (e.g. 32000)
+
+  Returns `{:ok, opus_binary}` or `{:error, reason}`.
+  """
+  @callback audio_encode(
+              pcm :: [float()],
+              sample_rate :: pos_integer(),
+              channels :: 1 | 2,
+              bitrate :: pos_integer()
+            ) :: {:ok, binary()} | {:error, term()}
+
+  @doc """
+  Decode an Opus frame to raw PCM samples.
+
+  Returns `{:ok, pcm_floats}` or `{:error, reason}`.
+  """
+  @callback audio_decode(
+              opus_frame :: binary(),
+              sample_rate :: pos_integer(),
+              channels :: 1 | 2
+            ) :: {:ok, [float()]} | {:error, term()}
+
+  @doc """
+  Apply noise gate to PCM samples.
+
+  Samples below `threshold_db` are zeroed. Simple but effective for
+  silencing background noise between speech.
+
+  Returns filtered PCM samples.
+  """
+  @callback audio_noise_gate(
+              pcm :: [float()],
+              threshold_db :: float()
+            ) :: [float()]
+
+  @doc """
+  Apply echo cancellation to a capture frame given a reference (playback) frame.
+
+  Uses NLMS (Normalised Least Mean Squares) adaptive filter.
+  The `filter_length` controls how many taps the filter uses.
+
+  Returns echo-cancelled PCM samples.
+  """
+  @callback audio_echo_cancel(
+              capture :: [float()],
+              reference :: [float()],
+              filter_length :: pos_integer()
+            ) :: [float()]
+
+  # ---------------------------------------------------------------------------
+  # Crypto kernel — E2EE frame encryption, hash chains
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Encrypt an audio frame using AES-256-GCM.
+
+  Returns `{:ok, {ciphertext, iv, tag}}` or `{:error, reason}`.
+  The IV is generated internally (12 bytes, random).
+  """
+  @callback crypto_encrypt_frame(
+              plaintext :: binary(),
+              key :: binary(),
+              aad :: binary()
+            ) :: {:ok, {binary(), binary(), binary()}} | {:error, term()}
+
+  @doc """
+  Decrypt an AES-256-GCM encrypted audio frame.
+
+  Returns `{:ok, plaintext}` or `{:error, :decrypt_failed}`.
+  """
+  @callback crypto_decrypt_frame(
+              ciphertext :: binary(),
+              key :: binary(),
+              iv :: binary(),
+              tag :: binary(),
+              aad :: binary()
+            ) :: {:ok, binary()} | {:error, :decrypt_failed}
+
+  @doc """
+  Compute a SHA-256 hash chain link for Avow/Vext integrity.
+
+  Given the previous hash and a payload, returns the next hash in the chain.
+  """
+  @callback crypto_hash_chain(
+              prev_hash :: binary(),
+              payload :: binary()
+            ) :: binary()
+
+  @doc """
+  Derive an E2EE frame key from a shared secret using HKDF-SHA256.
+
+  Returns a 32-byte key suitable for AES-256-GCM.
+  """
+  @callback crypto_derive_frame_key(
+              shared_secret :: binary(),
+              salt :: binary(),
+              info :: binary()
+            ) :: binary()
+
+  # ---------------------------------------------------------------------------
+  # I/O kernel — jitter buffer, packet loss concealment, adaptive bitrate
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Insert a packet into a jitter buffer and return the next playable frame.
+
+  The buffer reorders out-of-order packets and smooths timing jitter.
+  `buffer_state` is an opaque map managed by the kernel.
+
+  Returns `{:ok, frame | nil, updated_buffer}` — frame is nil if
+  the buffer needs more packets before it can emit.
+  """
+  @callback io_jitter_buffer_push(
+              buffer_state :: map(),
+              packet :: binary(),
+              sequence :: non_neg_integer(),
+              timestamp :: non_neg_integer()
+            ) :: {:ok, binary() | nil, map()}
+
+  @doc """
+  Generate a concealment frame for a lost packet.
+
+  Uses the previous frame(s) to interpolate or repeat. The simplest
+  approach is repetition; better implementations use pitch-period
+  repetition or interpolation.
+
+  Returns a synthetic PCM frame.
+  """
+  @callback io_conceal_loss(
+              prev_frames :: [binary()],
+              frame_size :: pos_integer()
+            ) :: binary()
+
+  @doc """
+  Compute an adaptive bitrate recommendation based on network conditions.
+
+  Takes packet loss ratio (0.0–1.0), round-trip time in ms, and
+  current bitrate. Returns recommended bitrate in bits/sec.
+  """
+  @callback io_adaptive_bitrate(
+              loss_ratio :: float(),
+              rtt_ms :: non_neg_integer(),
+              current_bitrate :: pos_integer()
+            ) :: pos_integer()
+
+  # ---------------------------------------------------------------------------
+  # DSP kernel — FFT, convolution, mixing matrix
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Compute the real FFT of a PCM signal.
+
+  Returns complex frequency bins as `[{real, imag}, ...]`.
+  Input length must be a power of 2.
+  """
+  @callback dsp_fft(
+              signal :: [float()],
+              size :: pos_integer()
+            ) :: [{float(), float()}]
+
+  @doc """
+  Compute the inverse FFT, returning time-domain samples.
+  """
+  @callback dsp_ifft(
+              spectrum :: [{float(), float()}],
+              size :: pos_integer()
+            ) :: [float()]
+
+  @doc """
+  Convolve two signals (e.g. audio + impulse response).
+
+  Returns the convolution result. Length = len(a) + len(b) - 1.
+  """
+  @callback dsp_convolve(
+              a :: [float()],
+              b :: [float()]
+            ) :: [float()]
+
+  @doc """
+  Apply a mixing matrix to multiple audio streams.
+
+  `streams` is a list of PCM sample lists (one per source).
+  `matrix` is a list of lists of floats — gains[output][input].
+  Returns mixed output streams.
+  """
+  @callback dsp_mix(
+              streams :: [[float()]],
+              matrix :: [[float()]]
+            ) :: [[float()]]
+
+  # ---------------------------------------------------------------------------
+  # Neural kernel — ML-based noise suppression
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Apply ML-based noise suppression to a PCM frame.
+
+  Removes non-speech sounds (keyboard clicks, fan noise, dog barking)
+  while preserving speech. The `model_state` is opaque and maintained
+  across frames for temporal continuity.
+
+  Returns `{cleaned_pcm, updated_model_state}`.
+  """
+  @callback neural_denoise(
+              pcm :: [float()],
+              sample_rate :: pos_integer(),
+              model_state :: term()
+            ) :: {[float()], term()}
+
+  @doc """
+  Initialise the neural denoising model state.
+
+  Called once per session. Returns the initial opaque model state.
+  """
+  @callback neural_init_model(
+              sample_rate :: pos_integer()
+            ) :: term()
+
+  @doc """
+  Classify the dominant noise type in a PCM frame.
+
+  Returns one of: `:speech`, `:keyboard`, `:fan`, `:dog`, `:music`,
+  `:silence`, `:unknown`, along with a confidence score (0.0–1.0).
+  """
+  @callback neural_classify_noise(
+              pcm :: [float()],
+              sample_rate :: pos_integer()
+            ) :: {atom(), float()}
+end

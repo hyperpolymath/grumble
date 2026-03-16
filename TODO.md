@@ -17,25 +17,35 @@
 - [ ] Build text chat component (with NNTPS threading)
 
 ### Coprocessor backends
-- [ ] Audio kernel: Opus encode/decode, noise suppression, echo cancellation
-- [ ] Crypto kernel: E2EE frame encryption (AES-GCM), Avow hash chains
-- [ ] Neural kernel: AI noise suppression (keyboard/fan/dog removal)
-- [ ] I/O kernel: jitter buffer, packet loss concealment, adaptive bitrate
-- [ ] Math/DSP kernel: FFT, convolution, mixing matrix
-- [ ] Idris2 ABI definitions for coprocessor interfaces
-- [ ] Zig FFI NIFs for BEAM integration (hot path)
+- [x] Backend behaviour (abstract kernel interface — Axiom.jl pattern)
+- [x] ElixirBackend (pure Elixir reference implementation, all 5 kernels)
+- [x] SmartBackend (per-operation dispatch to fastest backend)
+- [x] ZigBackend (NIF stub with graceful fallback to Elixir)
+- [x] Pipeline GenServer (per-peer outbound/inbound frame processing)
+- [x] Audio kernel: PCM encode/decode, noise gate, NLMS echo cancellation
+- [x] Crypto kernel: AES-256-GCM encrypt/decrypt, SHA-256 hash chains, HKDF
+- [x] Neural kernel: spectral gating denoiser, noise classification
+- [x] I/O kernel: jitter buffer, packet loss concealment, AIMD adaptive bitrate
+- [x] DSP kernel: Cooley-Tukey FFT/IFFT, direct convolution, mixing matrix
+- [x] Idris2 ABI definitions (Types.idr, Foreign.idr — dependent type proofs)
+- [x] Zig FFI source (audio.zig, dsp.zig, neural.zig — SIMD implementations)
+- [ ] Wire NIF entry points in nif.zig (Erlang NIF boilerplate)
+- [ ] Compile Zig NIFs and verify NIF loading in ZigBackend
+- [ ] Benchmark ElixirBackend vs ZigBackend, update SmartBackend dispatch table
+- [ ] Wire Pipeline into Media.Engine (per-peer pipeline lifecycle)
+- [ ] RNNoise-style neural model (Phase 2 — replace spectral gating)
 
 ### VeriSimDB integration (dogfooding)
 - [x] Replace PostgreSQL/Ecto with VeriSimDB for user accounts
 - [x] Burble.Store GenServer wrapping VeriSimClient
 - [x] User validation without Ecto (pure struct + validation)
 - [x] Provenance modality for auth audit trail
-- [ ] Store magic link tokens (temporal modality for expiry)
-- [ ] Store invite tokens in VeriSimDB (replace in-memory)
+- [x] Store magic link tokens (temporal modality for expiry)
+- [x] Store invite tokens in VeriSimDB (replace in-memory)
+- [x] Delete old Ecto migration and Repo stub
 - [ ] Audit log queries via VeriSimDB provenance chains
 - [ ] Room config persistence (document modality)
 - [ ] Server/guild config persistence
-- [ ] Delete old Ecto migration and Repo stub after verification
 
 ## Medium term
 

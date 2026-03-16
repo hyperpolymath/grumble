@@ -40,6 +40,12 @@ defmodule Burble.Application do
       # Room registry — maps room IDs to PIDs
       {Registry, keys: :unique, name: Burble.RoomRegistry},
 
+      # Coprocessor pipeline registry — maps peer IDs to pipeline PIDs
+      {Registry, keys: :unique, name: Burble.CoprocessorRegistry},
+
+      # Coprocessor pipeline supervisor — one pipeline per active peer
+      {DynamicSupervisor, name: Burble.CoprocessorSupervisor, strategy: :one_for_one},
+
       # Text channels (NNTPS-backed persistent threaded messages)
       Burble.Text.NNTPSBackend,
 

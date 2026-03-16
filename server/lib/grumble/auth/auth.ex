@@ -69,27 +69,56 @@ defmodule Burble.Auth do
      }}
   end
 
-  @doc "Generate a magic link token for passwordless login."
+  @doc """
+  Generate a magic link token for passwordless login.
+
+  Stores the token in VeriSimDB with a 15-minute expiry via the
+  temporal modality.
+  """
   def generate_magic_link(email) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-    # TODO: store magic link token in VeriSimDB (temporal modality for expiry)
-    _ = email
-    {:ok, token}
+    Store.store_magic_link(token, email)
   end
 
-  @doc "Generate a one-time invite token for a server."
+  @doc """
+  Validate a magic link token and return the associated email.
+
+  Consumes the token (one-time use). Returns `{:error, :expired}` if
+  the 15-minute window has passed.
+  """
+  def verify_magic_link(token) do
+    Store.consume_magic_link(token)
+  end
+
+  @doc """
+  Generate a one-time invite token for a server.
+
+  Stores the invite in VeriSimDB with temporal expiry and use-count
+  tracking via the document modality.
+  """
   def generate_invite_token(server_id, opts \\ []) do
     max_uses = Keyword.get(opts, :max_uses, 1)
     expires_in = Keyword.get(opts, :expires_in, 86_400)
     token = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
 
-    {:ok,
-     %{
-       token: token,
-       server_id: server_id,
-       max_uses: max_uses,
-       expires_at: DateTime.add(DateTime.utc_now(), expires_in, :second),
-       uses: 0
-     }}
+    invite = %{
+      token: token,
+      server_id: server_id,
+      max_uses: max_uses,
+      expires_at: DateTime.add(DateTime.utc_now(), expires_in, :second),
+      uses: 0
+    }
+
+    Store.store_invite(invite)
+  end
+
+  @doc """
+  Validate and consume an invite token.
+
+  Increments the use count. Returns `{:error, :exhausted}` if max_uses
+  reached, `{:error, :expired}` if past expiry.
+  """
+  def redeem_invite(token) do
+    Store.consume_invite(token)
   end
 end

@@ -105,6 +105,54 @@ defmodule Burble.Store do
   end
 
   @doc """
+  Store a magic link token with a 15-minute expiry.
+
+  Uses VeriSimDB temporal modality to encode the expiry timestamp,
+  and document modality for the email association.
+
+  Returns `{:ok, token}` or `{:error, reason}`.
+  """
+  @spec store_magic_link(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def store_magic_link(token, email) do
+    GenServer.call(__MODULE__, {:store_magic_link, token, email})
+  end
+
+  @doc """
+  Validate and consume a magic link token.
+
+  Returns `{:ok, email}` if the token is valid and not expired,
+  or `{:error, :invalid_token}` / `{:error, :expired}`.
+  """
+  @spec consume_magic_link(String.t()) :: {:ok, String.t()} | {:error, :invalid_token | :expired}
+  def consume_magic_link(token) do
+    GenServer.call(__MODULE__, {:consume_magic_link, token})
+  end
+
+  @doc """
+  Store an invite token with metadata and expiry.
+
+  Uses VeriSimDB temporal modality for auto-expiry tracking and
+  document modality for invite configuration (max_uses, server_id).
+
+  Returns `{:ok, invite_map}` or `{:error, reason}`.
+  """
+  @spec store_invite(map()) :: {:ok, map()} | {:error, term()}
+  def store_invite(invite) do
+    GenServer.call(__MODULE__, {:store_invite, invite})
+  end
+
+  @doc """
+  Look up and validate an invite token.
+
+  Returns `{:ok, invite_map}` if valid (not expired, uses remaining),
+  or `{:error, :invalid_token}` / `{:error, :expired}` / `{:error, :exhausted}`.
+  """
+  @spec consume_invite(String.t()) :: {:ok, map()} | {:error, :invalid_token | :expired | :exhausted}
+  def consume_invite(token) do
+    GenServer.call(__MODULE__, {:consume_invite, token})
+  end
+
+  @doc """
   Check if the VeriSimDB connection is healthy.
   """
   @spec health() :: {:ok, boolean()} | {:error, term()}
@@ -246,6 +294,132 @@ defmodule Burble.Store do
   end
 
   @impl true
+  def handle_call({:store_magic_link, token, email}, _from, %{client: client} = state) do
+    expires_at = DateTime.add(DateTime.utc_now(), 15 * 60, :second)
+
+    octad_input = %{
+      name: "magic:#{token}",
+      description: "Magic link for #{email}",
+      metadata: %{entity_type: "burble_magic_link"},
+      document: %{
+        content: Jason.encode!(%{email: String.downcase(email), consumed: false}),
+        content_type: "application/json"
+      },
+      temporal: %{
+        timestamp: DateTime.to_iso8601(expires_at),
+        duration_ms: 15 * 60 * 1000,
+        metadata: %{type: "expiry"}
+      }
+    }
+
+    case VeriSimClient.Octad.create(client, octad_input) do
+      {:ok, _octad} -> {:reply, {:ok, token}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:consume_magic_link, token}, _from, %{client: client} = state) do
+    search_name = "magic:#{token}"
+
+    case VeriSimClient.Search.text(client, search_name, limit: 1) do
+      {:ok, results} when is_list(results) ->
+        case find_by_name(results, search_name) do
+          nil ->
+            {:reply, {:error, :invalid_token}, state}
+
+          octad ->
+            fields = extract_document_fields(octad)
+            temporal = get_in(octad, ["temporal"]) || get_in(octad, [:temporal]) || %{}
+            expires_str = temporal["timestamp"] || temporal[:timestamp]
+
+            cond do
+              fields["consumed"] == true ->
+                {:reply, {:error, :invalid_token}, state}
+
+              expired?(expires_str) ->
+                {:reply, {:error, :expired}, state}
+
+              true ->
+                # Mark as consumed.
+                octad_id = get_in(octad, ["id"]) || get_in(octad, [:id])
+                mark_consumed(client, octad_id, fields)
+                {:reply, {:ok, fields["email"]}, state}
+            end
+        end
+
+      {:ok, %{"data" => data}} when is_list(data) ->
+        case find_by_name(data, search_name) do
+          nil -> {:reply, {:error, :invalid_token}, state}
+          octad ->
+            fields = extract_document_fields(octad)
+            temporal = get_in(octad, ["temporal"]) || get_in(octad, [:temporal]) || %{}
+            expires_str = temporal["timestamp"] || temporal[:timestamp]
+
+            cond do
+              fields["consumed"] == true -> {:reply, {:error, :invalid_token}, state}
+              expired?(expires_str) -> {:reply, {:error, :expired}, state}
+              true ->
+                octad_id = get_in(octad, ["id"]) || get_in(octad, [:id])
+                mark_consumed(client, octad_id, fields)
+                {:reply, {:ok, fields["email"]}, state}
+            end
+        end
+
+      _ ->
+        {:reply, {:error, :invalid_token}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:store_invite, invite}, _from, %{client: client} = state) do
+    token = invite.token || invite["token"]
+    server_id = invite.server_id || invite["server_id"]
+    max_uses = invite.max_uses || invite["max_uses"] || 1
+    expires_at = invite.expires_at || invite["expires_at"]
+
+    octad_input = %{
+      name: "invite:#{token}",
+      description: "Invite token for server #{server_id}",
+      metadata: %{entity_type: "burble_invite"},
+      document: %{
+        content: Jason.encode!(%{
+          token: token,
+          server_id: server_id,
+          max_uses: max_uses,
+          uses: 0
+        }),
+        content_type: "application/json"
+      },
+      temporal: %{
+        timestamp: DateTime.to_iso8601(expires_at),
+        metadata: %{type: "expiry"}
+      }
+    }
+
+    case VeriSimClient.Octad.create(client, octad_input) do
+      {:ok, _octad} -> {:reply, {:ok, invite}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:consume_invite, token}, _from, %{client: client} = state) do
+    search_name = "invite:#{token}"
+
+    case VeriSimClient.Search.text(client, search_name, limit: 1) do
+      {:ok, results} when is_list(results) ->
+        handle_invite_result(find_by_name(results, search_name), client, state)
+
+      {:ok, %{"data" => data}} when is_list(data) ->
+        handle_invite_result(find_by_name(data, search_name), client, state)
+
+      _ ->
+        {:reply, {:error, :invalid_token}, state}
+    end
+  end
+
+  @impl true
   def handle_call(:health, _from, %{client: client} = state) do
     result = VeriSimClient.health(client)
     {:reply, result, state}
@@ -323,5 +497,77 @@ defmodule Burble.Store do
       {k, v} when is_atom(k) -> {Atom.to_string(k), v}
       {k, v} -> {k, v}
     end)
+  end
+
+  # Find an octad in search results by exact name match.
+  defp find_by_name(results, name) do
+    Enum.find(results, fn r ->
+      get_in(r, ["name"]) == name || get_in(r, [:name]) == name
+    end)
+  end
+
+  # Check if an ISO 8601 timestamp is in the past.
+  defp expired?(nil), do: true
+  defp expired?(timestamp_str) when is_binary(timestamp_str) do
+    case DateTime.from_iso8601(timestamp_str) do
+      {:ok, expires_at, _offset} -> DateTime.compare(DateTime.utc_now(), expires_at) == :gt
+      _ -> true
+    end
+  end
+  defp expired?(_), do: true
+
+  # Mark a magic link octad as consumed by updating its document content.
+  defp mark_consumed(client, octad_id, fields) do
+    update_input = %{
+      document: %{
+        content: Jason.encode!(Map.put(fields, "consumed", true)),
+        content_type: "application/json"
+      }
+    }
+    VeriSimClient.Octad.update(client, octad_id, update_input)
+  end
+
+  # Handle invite token validation and use-count increment.
+  defp handle_invite_result(nil, _client, state) do
+    {:reply, {:error, :invalid_token}, state}
+  end
+
+  defp handle_invite_result(octad, client, state) do
+    fields = extract_document_fields(octad)
+    temporal = get_in(octad, ["temporal"]) || get_in(octad, [:temporal]) || %{}
+    expires_str = temporal["timestamp"] || temporal[:timestamp]
+    uses = fields["uses"] || 0
+    max_uses = fields["max_uses"] || 1
+
+    cond do
+      expired?(expires_str) ->
+        {:reply, {:error, :expired}, state}
+
+      uses >= max_uses ->
+        {:reply, {:error, :exhausted}, state}
+
+      true ->
+        # Increment use count.
+        octad_id = get_in(octad, ["id"]) || get_in(octad, [:id])
+        updated_fields = Map.put(fields, "uses", uses + 1)
+
+        update_input = %{
+          document: %{
+            content: Jason.encode!(updated_fields),
+            content_type: "application/json"
+          }
+        }
+
+        VeriSimClient.Octad.update(client, octad_id, update_input)
+
+        invite = %{
+          token: fields["token"],
+          server_id: fields["server_id"],
+          max_uses: max_uses,
+          uses: uses + 1
+        }
+
+        {:reply, {:ok, invite}, state}
+    end
   end
 end

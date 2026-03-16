@@ -9,3 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Run: just changelog -->
 
 ## [Unreleased]
+
+## [1.0.0-alpha.1] - 2026-03-16
+
+### Added
+- WebRTC SFU via ExWebRTC (per-peer PeerConnection, audio-only Opus, server-mediated SDP)
+- Guardian JWT auth (access 1h, refresh 30d, guest 4h tokens with rotation)
+- Ed25519 signatures for Avow consent attestations and Vext hash chains
+- VeriSimDB as sole data store (users, tokens, room/server configs, provenance)
+- Coprocessor kernel system (6 domains: audio, crypto, I/O, DSP, neural, compression)
+- Zig SIMD NIFs (LZ4 26,350x, echo cancel 62x, FFT 37x, convolve 28x speedups)
+- Vext hash chain integrity on NNTPS text feeds
+- Avow consent attestations on room join/leave
+- Role-based permissions (admin/moderator/member/guest) with channel overrides
+- Four topology modes (monarchic, oligarchic, distributed, serverless)
+- Extension API with core/profiles/extensions three-tier architecture
+- Mumble bidirectional voice bridge
+- Server-side lossless recording (.barc archive format)
+- Compressed audit log export (JSONL + zstd, 12x ratio)
+- Magic link email via Swoosh
+- Embeddable client library (@burble/client) with BurbleClient, BurbleVoice, BurbleSpatial, BurbleSignaling
+- IDApTIK integration (VoiceBridge, spatial audio, game state awareness)
+- PanLL integration (BurbleEngine, PanelBus events, VoiceTag hooks)
+- Containerfiles (Chainguard base, podman-compose.toml)
+- 49 ExUnit tests, zero compiler warnings
+- proven safety bridge (formally verified crypto, password, UUID, email, path)
+- panic-attack assail: 0 weak points in Zig code

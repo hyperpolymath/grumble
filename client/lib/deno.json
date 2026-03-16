@@ -1,0 +1,16 @@
+{
+  "name": "@burble/client",
+  "version": "1.0.0-alpha.1",
+  "exports": {
+    ".": "./src/BurbleClient.res.mjs",
+    "./voice": "./src/BurbleVoice.res.mjs",
+    "./signaling": "./src/BurbleSignaling.res.mjs",
+    "./spatial": "./src/BurbleSpatial.res.mjs",
+    "./profile": "./src/BurbleProfile.res.mjs",
+    "./extensions/idaptik": "./src/extensions/IDApTIKVoice.res.mjs",
+    "./extensions/panll": "./src/extensions/PanLLVoice.res.mjs"
+  },
+  "publish": {
+    "include": ["src/**/*.res.mjs", "src/**/*.res", "deno.json", "rescript.json", "LICENSE", "README.md"]
+  }
+}

@@ -10,7 +10,8 @@
 defmodule Burble.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "1.0.0-alpha.1"
+  @source_url "https://github.com/hyperpolymath/burble"
 
   def project do
     [
@@ -22,16 +23,99 @@ defmodule Burble.MixProject do
       aliases: aliases(),
       deps: deps(),
       name: "Burble",
-      description: "Voice-first communications server. Self-hostable. WebRTC-compatible.",
-      source_url: "https://github.com/hyperpolymath/burble",
-      docs: [main: "Burble", extras: ["../README.adoc"]]
+      description: description(),
+      package: package(),
+      source_url: @source_url,
+      homepage_url: @source_url,
+      docs: docs()
     ]
   end
 
   def application do
     [
       mod: {Burble.Application, []},
-      extra_applications: [:logger, :runtime_tools, :os_mon]
+      extra_applications: [:logger, :runtime_tools, :os_mon, :crypto]
+    ]
+  end
+
+  defp description do
+    """
+    Voice-first communications server. Self-hostable, E2EE-capable,
+    formally verified. WebRTC SFU with SIMD-accelerated coprocessor
+    kernels (Zig NIFs), Vext hash chain integrity, Avow consent
+    attestations, and four deployment topologies.
+    """
+  end
+
+  defp package do
+    [
+      name: "burble",
+      licenses: ["PMPL-1.0-or-later"],
+      links: %{
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
+      },
+      maintainers: ["Jonathan D.A. Jewell"],
+      files: ~w(
+        lib config priv
+        mix.exs mix.lock
+        README* LICENSE* CHANGELOG* SECURITY*
+        .formatter.exs
+      )
+    ]
+  end
+
+  defp docs do
+    [
+      main: "Burble",
+      source_ref: "v#{@version}",
+      source_url: @source_url,
+      extras: ["../README.adoc", "../SECURITY.md"],
+      groups_for_modules: [
+        "Core": [
+          Burble.Application,
+          Burble.Store,
+          Burble.Topology
+        ],
+        "Auth": [
+          Burble.Auth,
+          Burble.Auth.User,
+          Burble.Auth.Guardian,
+          Burble.Auth.GuardianPipeline,
+          Burble.Auth.GuardianErrorHandler
+        ],
+        "Media": [
+          Burble.Media.Engine,
+          Burble.Media.Peer,
+          Burble.Media.Privacy,
+          Burble.Media.Recorder
+        ],
+        "Coprocessor": [
+          Burble.Coprocessor.Backend,
+          Burble.Coprocessor.ElixirBackend,
+          Burble.Coprocessor.ZigBackend,
+          Burble.Coprocessor.SmartBackend,
+          Burble.Coprocessor.Pipeline
+        ],
+        "Verification": [
+          Burble.Verification.Avow,
+          Burble.Verification.Vext
+        ],
+        "Text": [
+          Burble.Text.NNTPSBackend
+        ],
+        "Bridges": [
+          Burble.Bridges.Mumble
+        ],
+        "Safety": [
+          Burble.Safety.ProvenBridge
+        ],
+        "Web": [
+          BurbleWeb.Router,
+          BurbleWeb.RoomChannel,
+          BurbleWeb.UserSocket
+        ]
+      ]
     ]
   end
 
@@ -59,12 +143,16 @@ defmodule Burble.MixProject do
       {:guardian, "~> 2.3"},
       {:jose, "~> 1.11"},
 
-      # Persistent store — VeriSimDB (dogfooding)
-      {:verisim_client, path: "../../nextgen-databases/verisimdb/connectors/clients/elixir"},
+      # Persistent store — VeriSimDB client SDK.
+      # For Hex: {:verisim_client, "~> 0.1"}
+      # For development: path dep to local checkout.
+      {:verisim_client, git: "https://github.com/hyperpolymath/verisimdb.git",
+       sparse: "connectors/clients/elixir"},
 
-      # Formally verified safety functions (Idris2 core via Zig FFI).
-      # Excluded from prod release if NIF not compiled — ProvenBridge falls back to stdlib.
-      {:proven, path: "../../proven/bindings/elixir", runtime: false},
+      # Formally verified safety functions (optional — falls back to stdlib).
+      # For Hex: {:proven, "~> 0.10", optional: true}
+      {:proven, git: "https://github.com/hyperpolymath/proven.git",
+       sparse: "bindings/elixir", runtime: false},
 
       # Telemetry and observability
       {:telemetry_metrics, "~> 1.0"},

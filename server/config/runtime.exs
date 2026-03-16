@@ -44,4 +44,16 @@ if config_env() == :prod do
       port: port
     ],
     secret_key_base: secret_key_base
+
+  # Guardian JWT secret — use SECRET_KEY_BASE if GUARDIAN_SECRET not set.
+  guardian_secret = System.get_env("GUARDIAN_SECRET") || secret_key_base
+
+  config :burble, Burble.Auth.Guardian,
+    secret_key: guardian_secret
+
+  # Topology mode (override for production clusters).
+  topology = System.get_env("BURBLE_TOPOLOGY") || "monarchic"
+
+  config :burble, Burble.Topology,
+    mode: String.to_existing_atom(topology)
 end

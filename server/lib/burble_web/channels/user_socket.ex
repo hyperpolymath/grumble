@@ -3,31 +3,39 @@
 # BurbleWeb.UserSocket — WebSocket entry point for voice signaling.
 #
 # Clients connect here and then join room channels for voice comms.
-# Authentication happens at connect time via token verification.
+# Authentication happens at connect time via Guardian JWT verification.
 
 defmodule BurbleWeb.UserSocket do
   use Phoenix.Socket
+
+  alias Burble.Auth.Guardian
 
   channel "room:*", BurbleWeb.RoomChannel
 
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) do
-    case verify_token(token) do
-      {:ok, user_data} ->
-        socket =
-          socket
-          |> assign(:user_id, user_data.id)
-          |> assign(:display_name, user_data.display_name)
-          |> assign(:is_guest, Map.get(user_data, :is_guest, false))
+    case Guardian.decode_and_verify(token) do
+      {:ok, claims} ->
+        case Guardian.resource_from_claims(claims) do
+          {:ok, user} ->
+            socket =
+              socket
+              |> assign(:user_id, user.id || user[:id])
+              |> assign(:display_name, user.display_name || user[:display_name] || "User")
+              |> assign(:is_guest, Map.get(user, :is_guest, false))
 
-        {:ok, socket}
+            {:ok, socket}
+
+          {:error, _} ->
+            :error
+        end
 
       {:error, _reason} ->
         :error
     end
   end
 
-  # Guest connection (no token required if server policy allows)
+  # Guest connection (no token required if server policy allows).
   def connect(%{"guest" => "true", "display_name" => name}, socket, _connect_info) do
     {:ok, guest} = Burble.Auth.create_guest_session(name)
 
@@ -44,13 +52,4 @@ defmodule BurbleWeb.UserSocket do
 
   @impl true
   def id(socket), do: "user_socket:#{socket.assigns.user_id}"
-
-  defp verify_token(token) do
-    # TODO: Guardian token verification
-    # For now, accept any non-empty token during development
-    case Phoenix.Token.verify(BurbleWeb.Endpoint, "user_auth", token, max_age: 86_400) do
-      {:ok, user_id} -> {:ok, %{id: user_id, display_name: "User"}}
-      {:error, reason} -> {:error, reason}
-    end
-  end
 end

@@ -22,15 +22,30 @@ defmodule BurbleWeb.Router do
     plug :accepts, ["json"]
   end
 
-  # API routes
+  pipeline :authenticated_api do
+    plug :accepts, ["json"]
+    plug Burble.Auth.GuardianPipeline
+  end
+
+  # Public API routes (no auth required).
   scope "/api/v1", BurbleWeb.API do
     pipe_through :api
 
-    # Auth
+    # Auth (public — issues tokens)
     post "/auth/register", AuthController, :register
     post "/auth/login", AuthController, :login
     post "/auth/guest", AuthController, :guest
     post "/auth/magic-link", AuthController, :magic_link
+    post "/auth/refresh", AuthController, :refresh
+
+    # Invite acceptance (public — uses invite token, not auth token)
+    post "/invites/:token/accept", InviteController, :accept
+  end
+
+  # Authenticated API routes (require valid JWT).
+  scope "/api/v1", BurbleWeb.API do
+    pipe_through :authenticated_api
+
     delete "/auth/logout", AuthController, :logout
 
     # Servers
@@ -44,9 +59,8 @@ defmodule BurbleWeb.Router do
     get "/rooms/:id", RoomController, :show
     get "/rooms/:id/participants", RoomController, :participants
 
-    # Invites
+    # Invites (creation requires auth)
     post "/servers/:server_id/invites", InviteController, :create
-    post "/invites/:token/accept", InviteController, :accept
   end
 
   # LiveDashboard for operators (dev + prod with auth)

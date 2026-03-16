@@ -14,6 +14,19 @@ config :burble, BurbleWeb.Endpoint,
   pubsub_server: Burble.PubSub,
   live_view: [signing_salt: "burble_lv"]
 
+# Guardian JWT authentication
+config :burble, Burble.Auth.Guardian,
+  issuer: "burble",
+  # Secret key — MUST be overridden in prod via SECRET_KEY_BASE or GUARDIAN_SECRET.
+  secret_key: "dev_only_guardian_secret_replace_in_production_with_real_secret_key_64_bytes",
+  ttl: {1, :hour},
+  allowed_algos: ["HS256"],
+  verify_issuer: true
+
+# Deployment topology (monarchic, oligarchic, distributed, serverless)
+config :burble, Burble.Topology,
+  mode: :monarchic
+
 # VeriSimDB persistent store
 config :burble, Burble.Store,
   url: "http://localhost:8080",

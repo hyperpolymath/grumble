@@ -51,3 +51,4 @@ dist/
 .env
 .env.local
 .env.production
+erl_crash.dump

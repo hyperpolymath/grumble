@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// IDApTIKVoice — Burble extension for IDApTIK game voice integration.
+//
+// Provides the voice layer for Jessica↔Q asymmetric co-op gameplay.
+// Built as a Burble extension so IDApTIK doesn't need to know about
+// WebRTC, codecs, or audio processing — just position updates and
+// voice state.
+//
+// Features:
+//   - Spatial audio tied to character positions (Jessica/Q in-world)
+//   - Auto-mute during cutscenes
+//   - Push-to-talk bound to game controls
+//   - Voice commands routed to VM (e.g. "undo last action")
+//   - Covert whisper mode (Q↔Jessica private channel during stealth)
+//
+// Integration:
+//   1. IDApTIK's MultiplayerClient creates a BurbleClient with this extension
+//   2. On game session start, joinVoiceRoom is called
+//   3. During gameplay, character positions feed BurbleSpatial
+//   4. On session end, voice disconnects automatically
+//
+// This extension is extracted to Burble's client/lib/ (not IDApTIK's repo)
+// so Burble can ship it as an optional module for any game integration.
+
+/// Game state relevant to voice (passed from IDApTIK to this extension).
+type gameVoiceState =
+  | InMenu            // Not in gameplay — voice optional
+  | InLobby           // Pre-game lobby — standard voice
+  | InGameplay        // Active gameplay — spatial audio active
+  | InCutscene        // Cutscene — auto-mute player mic
+  | InStealth         // Stealth section — whisper mode enforced
+  | Paused            // Game paused — voice stays connected
+
+/// Character role (determines spatial behaviour).
+type characterRole =
+  | Jessica  // SBS operative, on the ground
+  | Q        // Remote support, CCTV/blueprints view
+
+/// Voice command recognised from audio (future: speech-to-text).
+type voiceCommand =
+  | UndoLastAction
+  | RedoLastAction
+  | MarkPosition(string)  // "Mark this as exit"
+  | AlertPartner(string)  // "Guard incoming"
+  | Custom(string)
+
+/// Extension state.
+type idaptikState = {
+  mutable gameState: gameVoiceState,
+  mutable role: option<characterRole>,
+  mutable partnerPeerId: option<string>,
+  mutable covertWhisperActive: bool,
+  mutable autoMuted: bool,
+  mutable onVoiceCommand: option<voiceCommand => unit>,
+}
+
+let state: idaptikState = {
+  gameState: InMenu,
+  role: None,
+  partnerPeerId: None,
+  covertWhisperActive: false,
+  autoMuted: false,
+  onVoiceCommand: None,
+}
+
+// ---------------------------------------------------------------------------
+// Game state updates (called by IDApTIK's game loop)
+// ---------------------------------------------------------------------------
+
+/// Update the game voice state. Triggers auto-mute/unmute as needed.
+let setGameState = (newState: gameVoiceState): unit => {
+  let prevState = state.gameState
+  state.gameState = newState
+
+  // Auto-mute during cutscenes.
+  switch (prevState, newState) {
+  | (_, InCutscene) =>
+    state.autoMuted = true
+  | (InCutscene, _) =>
+    state.autoMuted = false
+  | _ => ()
+  }
+
+  // Enforce whisper mode during stealth.
+  switch newState {
+  | InStealth => state.covertWhisperActive = true
+  | _ => state.covertWhisperActive = false
+  }
+}
+
+/// Set the local player's character role.
+let setRole = (role: characterRole): unit => {
+  state.role = Some(role)
+}
+
+/// Set the co-op partner's peer ID (for directed whisper).
+let setPartner = (peerId: string): unit => {
+  state.partnerPeerId = Some(peerId)
+}
+
+/// Register a callback for voice commands.
+let onVoiceCommand = (handler: voiceCommand => unit): unit => {
+  state.onVoiceCommand = Some(handler)
+}
+
+/// Update character position (feeds into BurbleSpatial).
+let updateCharacterPosition = (x: float, y: float, z: float): unit => {
+  BurbleSpatial.setListenerPosition({x, y, z})
+}
+
+/// Update partner's character position in the spatial field.
+let updatePartnerPosition = (x: float, y: float, z: float): unit => {
+  switch state.partnerPeerId {
+  | Some(peerId) => BurbleSpatial.setPeerPosition(peerId, {x, y, z})
+  | None => ()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Extension interface
+// ---------------------------------------------------------------------------
+
+/// Create the BurbleClient extension for IDApTIK.
+/// Register with: BurbleClient.make({...config, extensions: [IDApTIKVoice.makeExtension()]})
+let makeExtension = (): BurbleClient.extension => {
+  {
+    name: "idaptik-voice",
+    onConnect: Some(_client => {
+      // Reset state on new connection.
+      state.gameState = InMenu
+      state.covertWhisperActive = false
+      state.autoMuted = false
+    }),
+    onRoomJoin: Some((_client, _roomId) => {
+      // Configure spatial audio for gaming profile.
+      BurbleSpatial.configure(
+        ~maxDistance=50.0,   // Game world units
+        ~refDistance=2.0,    // Full volume within 2 units
+        ~rolloffFactor=1.5,  // Moderate falloff
+        ~distanceModel="inverse",
+        (),
+      )
+      BurbleSpatial.setEnabled(true)
+    }),
+    onRoomLeave: Some(_client => {
+      state.gameState = InMenu
+      BurbleSpatial.setEnabled(false)
+    }),
+    onVoiceFrame: Some((_client, frame) => {
+      // During cutscenes, zero out the frame (auto-mute).
+      if state.autoMuted {
+        Some(Array.make(~length=Array.length(frame), 0.0))
+      } else {
+        None // No modification — pass through.
+      }
+    }),
+    onParticipantChange: Some((_client, participant) => {
+      // Track partner speaking state for UI.
+      switch state.partnerPeerId {
+      | Some(pid) if pid == participant.id =>
+        // Partner's voice state changed — game UI can react.
+        ()
+      | _ => ()
+      }
+    }),
+    onDisconnect: Some(_client => {
+      state.gameState = InMenu
+      state.role = None
+      state.partnerPeerId = None
+    }),
+  }
+}

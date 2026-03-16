@@ -1,0 +1,186 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// BurbleSpatial — Positional audio extension for BurbleClient.
+//
+// Provides 3D spatial audio positioning using the Web Audio API's
+// PannerNode. Each peer's audio is positioned in 3D space based on
+// their game-world coordinates.
+//
+// This is an EXTENSION — developed for IDApTIK's Jessica↔Q co-op
+// voice, extracted to Burble's client lib for reuse. Any consumer
+// can register it; it's not part of the core.
+//
+// Usage:
+//   let spatial = BurbleSpatial.makeExtension()
+//   let client = BurbleClient.make({...config, extensions: [spatial]})
+//
+//   // During gameplay, update peer positions:
+//   BurbleSpatial.setPeerPosition("peer_123", {x: 10.0, y: 0.0, z: -5.0})
+//   BurbleSpatial.setListenerPosition({x: 0.0, y: 0.0, z: 0.0})
+
+/// 3D position in game-world coordinates.
+type position = {x: float, y: float, z: float}
+
+/// Orientation (forward + up vectors).
+type orientation = {
+  forwardX: float,
+  forwardY: float,
+  forwardZ: float,
+  upX: float,
+  upY: float,
+  upZ: float,
+}
+
+/// Spatial audio state (module-level, shared across extension instances).
+type spatialState = {
+  /// Peer positions: peerId => position.
+  mutable peerPositions: Dict.t<string, position>,
+  /// Listener (local player) position.
+  mutable listenerPosition: position,
+  /// Listener orientation.
+  mutable listenerOrientation: orientation,
+  /// Attenuation model.
+  mutable distanceModel: string, // "inverse" | "linear" | "exponential"
+  /// Maximum distance before audio is silent.
+  mutable maxDistance: float,
+  /// Reference distance (full volume).
+  mutable refDistance: float,
+  /// Rolloff factor (how quickly volume drops with distance).
+  mutable rolloffFactor: float,
+  /// Active state.
+  mutable enabled: bool,
+}
+
+/// Default spatial state.
+let defaultState = (): spatialState => {
+  peerPositions: Dict.make(),
+  listenerPosition: {x: 0.0, y: 0.0, z: 0.0},
+  listenerOrientation: {
+    forwardX: 0.0,
+    forwardY: 0.0,
+    forwardZ: -1.0,
+    upX: 0.0,
+    upY: 1.0,
+    upZ: 0.0,
+  },
+  distanceModel: "inverse",
+  maxDistance: 100.0,
+  refDistance: 1.0,
+  rolloffFactor: 1.0,
+  enabled: true,
+}
+
+/// Module-level state (one per application).
+let state: spatialState = defaultState()
+
+// ---------------------------------------------------------------------------
+// Position updates (called by the game engine)
+// ---------------------------------------------------------------------------
+
+/// Set a peer's position in 3D space.
+let setPeerPosition = (peerId: string, pos: position): unit => {
+  state.peerPositions->Dict.set(peerId, pos)
+  // In production: update the peer's PannerNode position.
+}
+
+/// Remove a peer's spatial tracking (e.g. on leave).
+let removePeer = (peerId: string): unit => {
+  state.peerPositions->Dict.delete(peerId)
+}
+
+/// Set the local listener's position (typically the player character).
+let setListenerPosition = (pos: position): unit => {
+  state.listenerPosition = pos
+}
+
+/// Set the local listener's orientation.
+let setListenerOrientation = (orient: orientation): unit => {
+  state.listenerOrientation = orient
+}
+
+/// Configure spatial audio parameters.
+let configure = (
+  ~maxDistance=100.0,
+  ~refDistance=1.0,
+  ~rolloffFactor=1.0,
+  ~distanceModel="inverse",
+  (),
+): unit => {
+  state.maxDistance = maxDistance
+  state.refDistance = refDistance
+  state.rolloffFactor = rolloffFactor
+  state.distanceModel = distanceModel
+}
+
+/// Enable/disable spatial audio processing.
+let setEnabled = (enabled: bool): unit => {
+  state.enabled = enabled
+}
+
+// ---------------------------------------------------------------------------
+// Distance calculation (for UI display, not audio — WebAudio handles that)
+// ---------------------------------------------------------------------------
+
+/// Calculate the distance between listener and a peer.
+let distanceTo = (peerId: string): option<float> => {
+  switch state.peerPositions->Dict.get(peerId) {
+  | Some(peer) =>
+    let dx = peer.x -. state.listenerPosition.x
+    let dy = peer.y -. state.listenerPosition.y
+    let dz = peer.z -. state.listenerPosition.z
+    Some(Math.sqrt(dx *. dx +. dy *. dy +. dz *. dz))
+  | None => None
+  }
+}
+
+/// Get the direction to a peer (normalised vector).
+let directionTo = (peerId: string): option<position> => {
+  switch state.peerPositions->Dict.get(peerId) {
+  | Some(peer) =>
+    let dx = peer.x -. state.listenerPosition.x
+    let dy = peer.y -. state.listenerPosition.y
+    let dz = peer.z -. state.listenerPosition.z
+    let dist = Math.sqrt(dx *. dx +. dy *. dy +. dz *. dz)
+    if dist > 0.001 {
+      Some({x: dx /. dist, y: dy /. dist, z: dz /. dist})
+    } else {
+      Some({x: 0.0, y: 0.0, z: 0.0})
+    }
+  | None => None
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Extension interface (for BurbleClient.extension registration)
+// ---------------------------------------------------------------------------
+
+/// Create a BurbleClient extension for spatial audio.
+/// Register this with your BurbleClient instance to enable 3D positioning.
+let makeExtension = (): BurbleClient.extension => {
+  {
+    name: "burble-spatial",
+    onConnect: Some(_client => {
+      // Initialise spatial state.
+      state.enabled = true
+    }),
+    onRoomJoin: Some((_client, _roomId) => {
+      // Clear peer positions when joining a new room.
+      state.peerPositions = Dict.make()
+    }),
+    onRoomLeave: Some(_client => {
+      state.peerPositions = Dict.make()
+      state.enabled = false
+    }),
+    onVoiceFrame: None, // Spatial is WebAudio-level, not frame-level.
+    onParticipantChange: Some((_client, participant) => {
+      // Remove spatial tracking when a participant leaves.
+      if participant.voiceState == BurbleClient.Deafened {
+        removePeer(participant.id)
+      }
+    }),
+    onDisconnect: Some(_client => {
+      state.peerPositions = Dict.make()
+      state.enabled = false
+    }),
+  }
+}

@@ -189,7 +189,10 @@ defmodule Burble.Coprocessor.ZigBackend do
   @impl true
   def dsp_mix(streams, matrix) do
     if available?() do
-      nif_dsp_mix(streams, matrix)
+      case nif_dsp_mix(streams, matrix) do
+        {:ok, mixed} -> mixed
+        {:error, _} -> ElixirBackend.dsp_mix(streams, matrix)
+      end
     else
       ElixirBackend.dsp_mix(streams, matrix)
     end

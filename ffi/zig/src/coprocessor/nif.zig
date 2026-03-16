@@ -312,8 +312,92 @@ fn nif_dsp_convolve(env: ?*ErlNifEnv, _: c_int, argv: [*c]const ERL_NIF_TERM) ca
 // This is complex to marshal — for now, delegate to Elixir.
 // The SIMD benefit for mixing is mainly at >8 streams which is uncommon.
 
-fn nif_dsp_mix(env: ?*ErlNifEnv, _: c_int, _ : [*c]const ERL_NIF_TERM) callconv(.c) ERL_NIF_TERM {
-    return make_error(env, "not_implemented_use_elixir");
+fn nif_dsp_mix(env: ?*ErlNifEnv, _: c_int, argv: [*c]const ERL_NIF_TERM) callconv(.c) ERL_NIF_TERM {
+    // Parse streams (list of lists of floats).
+    var num_streams_c: c_uint = undefined;
+    if (c.enif_get_list_length(env, argv[0], &num_streams_c) == 0)
+        return make_error(env, "bad_streams");
+    const num_streams: usize = @intCast(num_streams_c);
+    if (num_streams > 32 or num_streams == 0) return make_error(env, "too_many_streams");
+
+    // Read each stream into a buffer.
+    var stream_bufs: [32][4800]f32 = undefined;
+    var stream_lens: [32]usize = undefined;
+    var stream_list = argv[0];
+    for (0..num_streams) |s| {
+        var head: ERL_NIF_TERM = undefined;
+        var tail: ERL_NIF_TERM = undefined;
+        if (c.enif_get_list_cell(env, stream_list, &head, &tail) == 0)
+            return make_error(env, "bad_stream_list");
+
+        var slen: c_uint = undefined;
+        if (c.enif_get_list_length(env, head, &slen) == 0)
+            return make_error(env, "bad_stream_inner");
+        const sl: usize = @intCast(slen);
+        if (sl > 4800) return make_error(env, "stream_too_long");
+
+        stream_lens[s] = get_float_list(env, head, stream_bufs[s][0..sl]) orelse
+            return make_error(env, "bad_stream_values");
+        stream_list = tail;
+    }
+
+    // Parse matrix (list of lists of floats): matrix[output][input].
+    var num_outputs_c: c_uint = undefined;
+    if (c.enif_get_list_length(env, argv[1], &num_outputs_c) == 0)
+        return make_error(env, "bad_matrix");
+    const num_outputs: usize = @intCast(num_outputs_c);
+    if (num_outputs > 32 or num_outputs == 0) return make_error(env, "too_many_outputs");
+
+    var gain_matrix: [32][32]f32 = undefined;
+    var matrix_list = argv[1];
+    for (0..num_outputs) |o| {
+        var head: ERL_NIF_TERM = undefined;
+        var tail: ERL_NIF_TERM = undefined;
+        if (c.enif_get_list_cell(env, matrix_list, &head, &tail) == 0)
+            return make_error(env, "bad_matrix_row");
+
+        var rlen: c_uint = undefined;
+        if (c.enif_get_list_length(env, head, &rlen) == 0)
+            return make_error(env, "bad_matrix_row_inner");
+        if (@as(usize, @intCast(rlen)) != num_streams)
+            return make_error(env, "matrix_dimension_mismatch");
+
+        _ = get_float_list(env, head, gain_matrix[o][0..num_streams]) orelse
+            return make_error(env, "bad_matrix_values");
+        matrix_list = tail;
+    }
+
+    // Determine frame length from first stream.
+    const frame_len = stream_lens[0];
+
+    // Mix: output[o][s] = sum_i(stream[i][s] * gain[o][i]).
+    var output_bufs: [32][4800]f32 = undefined;
+    for (0..num_outputs) |o| {
+        // Zero output.
+        for (0..frame_len) |s| {
+            output_bufs[o][s] = 0.0;
+        }
+        // Accumulate weighted inputs.
+        for (0..num_streams) |i| {
+            const gain = gain_matrix[o][i];
+            if (gain == 0.0) continue;
+            const sl = @min(stream_lens[i], frame_len);
+            for (0..sl) |s| {
+                output_bufs[o][s] += stream_bufs[i][s] * gain;
+            }
+        }
+    }
+
+    // Build result: list of lists.
+    var result = c.enif_make_list(env, 0);
+    var o: usize = num_outputs;
+    while (o > 0) {
+        o -= 1;
+        const out_list = make_float_list(env, output_bufs[o][0..frame_len]);
+        result = c.enif_make_list_cell(env, out_list, result);
+    }
+
+    return make_ok(env, result);
 }
 
 // ---------------------------------------------------------------------------

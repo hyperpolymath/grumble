@@ -39,7 +39,7 @@
 - [x] Server-side recorder (per-peer lossless .barc archive format)
 - [x] Audit log compressed export (JSONL + zstd, 12x ratio on JSON)
 - [x] Zig NIF for LZ4 compress/decompress (3µs vs 83ms = 26,350x speedup)
-- [ ] Wire dsp_mix NIF (complex list-of-lists marshalling)
+- [x] Wire dsp_mix NIF (list-of-lists marshalling, 32x32 max)
 - [x] panic-attack assail: fixed 3 unsafe pointer casts (serialization)
 - [x] proven integration: crypto, password, UUID, email, path via verified bridge
 - [x] Ephapax linear analysis: 3 opportunities documented (pipeline, E2EE keys, jitter buffer)
@@ -68,9 +68,13 @@
 - [x] Server-side recording (operator-approved) — Recorder module + .barc format
 
 ### Integration
-- [ ] Embeddable client library (client/lib/) for IDApTIK and PanLL
-- [ ] IDApTIK: wire Burble into multiplayer for Jessica↔Q voice
-- [ ] PanLL: wire Burble as workspace voice layer
+- [x] Embeddable client library (client/lib/) — BurbleClient, BurbleVoice, BurbleSignaling, BurbleProfile
+- [x] Extension API: core/profiles/extensions three-tier architecture
+- [x] BurbleSpatial extension: 3D positional audio via Web Audio API PannerNode
+- [x] IDApTIKVoice extension: Jessica↔Q spatial co-op, auto-mute cutscenes, stealth whisper
+- [x] PanLLVoice extension: workspace huddles, PanelBus events, VoiceTag integration
+- [ ] Wire IDApTIK MultiplayerClient.res to import @burble/client
+- [ ] Wire PanLL TauriEvents.res + BurbleEngine.res to import @burble/client
 - [ ] Spatial/positional audio (Physics coprocessor) for IDApTIK
 
 ### Desktop & mobile

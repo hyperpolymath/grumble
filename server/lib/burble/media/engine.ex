@@ -117,6 +117,17 @@ defmodule Burble.Media.Engine do
     GenServer.call(__MODULE__, {:health, room_id})
   end
 
+  @doc """
+  Distribute an RTP packet from one peer to all other peers in the room.
+
+  Called by Peer GenServers when they receive audio from their client.
+  The Engine looks up the room, finds all other peers, and forwards
+  the packet to each one's sendonly track.
+  """
+  def distribute_rtp(room_id, from_peer_id, packet) do
+    GenServer.cast(__MODULE__, {:distribute_rtp, room_id, from_peer_id, packet})
+  end
+
   # ── Server Callbacks ──
 
   @impl true
@@ -182,6 +193,7 @@ defmodule Burble.Media.Engine do
       session ->
         e2ee_enabled = session.privacy_mode in [:e2ee, :maximum]
         e2ee_key = if e2ee_enabled, do: Keyword.get(opts, :e2ee_key), else: nil
+        channel_pid = Keyword.get(opts, :channel_pid)
 
         peer = %{
           id: peer_id,
@@ -190,7 +202,33 @@ defmodule Burble.Media.Engine do
           e2ee_enabled: e2ee_enabled
         }
 
-        # Start a coprocessor pipeline for this peer.
+        # Start WebRTC Peer GenServer for this participant.
+        existing_peer_ids = Map.keys(session.peers)
+        peer_opts = [
+          peer_id: peer_id,
+          room_id: room_id,
+          channel_pid: channel_pid,
+          existing_peers: existing_peer_ids,
+          ice_servers: ice_servers_for_mode(session.privacy_mode)
+        ]
+
+        case DynamicSupervisor.start_child(
+               Burble.PeerSupervisor,
+               {Burble.Media.Peer, peer_opts}
+             ) do
+          {:ok, _pid} ->
+            Logger.info("[Media] Peer process started for #{peer_id}")
+
+          {:error, reason} ->
+            Logger.warning("[Media] Peer process failed for #{peer_id}: #{inspect(reason)}")
+        end
+
+        # Notify all existing peers about the new participant.
+        Enum.each(existing_peer_ids, fn existing_id ->
+          Burble.Media.Peer.peer_added(existing_id, peer_id)
+        end)
+
+        # Start coprocessor pipeline for this peer.
         pipeline_opts = [
           peer_id: peer_id,
           e2ee_key: e2ee_key,
@@ -234,7 +272,19 @@ defmodule Burble.Media.Engine do
         {:reply, {:error, :no_session}, state}
 
       session ->
-        # Stop the coprocessor pipeline for this peer.
+        # Stop the WebRTC Peer GenServer.
+        case Registry.lookup(Burble.PeerRegistry, peer_id) do
+          [{pid, _}] -> GenServer.stop(pid, :normal)
+          _ -> :ok
+        end
+
+        # Notify remaining peers.
+        remaining_ids = session.peers |> Map.delete(peer_id) |> Map.keys()
+        Enum.each(remaining_ids, fn other_id ->
+          Burble.Media.Peer.peer_removed(other_id, peer_id)
+        end)
+
+        # Stop the coprocessor pipeline.
         case Registry.lookup(Burble.CoprocessorRegistry, peer_id) do
           [{pid, _}] -> Burble.Coprocessor.Pipeline.stop(pid)
           _ -> :ok
@@ -321,8 +371,54 @@ defmodule Burble.Media.Engine do
     offer
   end
 
+  @impl true
+  def handle_cast({:distribute_rtp, room_id, from_peer_id, packet}, state) do
+    case Map.get(state.sessions, room_id) do
+      nil ->
+        :ok
+
+      session ->
+        # Forward to all peers EXCEPT the sender.
+        session.peers
+        |> Map.keys()
+        |> Enum.reject(fn id -> id == from_peer_id end)
+        |> Enum.each(fn peer_id ->
+          Burble.Media.Peer.forward_rtp(peer_id, from_peer_id, packet)
+        end)
+    end
+
+    {:noreply, state}
+  end
+
   defp ice_policy(:standard), do: :all
   defp ice_policy(:turn_only), do: :relay
   defp ice_policy(:e2ee), do: :relay
   defp ice_policy(:maximum), do: :relay
+
+  # ICE servers for each privacy mode.
+  defp ice_servers_for_mode(:standard) do
+    [%{urls: "stun:stun.l.google.com:19302"}]
+  end
+  defp ice_servers_for_mode(:turn_only) do
+    turn_config()
+  end
+  defp ice_servers_for_mode(:e2ee) do
+    turn_config()
+  end
+  defp ice_servers_for_mode(:maximum) do
+    turn_config()
+  end
+
+  defp turn_config do
+    # TURN server for relay-only modes.
+    # In production, set BURBLE_TURN_URL, BURBLE_TURN_USER, BURBLE_TURN_PASS.
+    url = System.get_env("BURBLE_TURN_URL") || "turn:localhost:3478"
+    user = System.get_env("BURBLE_TURN_USER") || "burble"
+    pass = System.get_env("BURBLE_TURN_PASS") || "burble_turn_secret"
+
+    [
+      %{urls: url, username: user, credential: pass},
+      %{urls: "stun:stun.l.google.com:19302"}
+    ]
+  end
 end

@@ -51,25 +51,49 @@ Client libraries expose a clean embedding API for these integrations.
 
 == Quick Start
 
-[source,bash]
-----
-# Server (Elixir)
-cd server
-mix deps.get
-mix phx.server
+=== Prerequisites
 
-# Web client (ReScript + Deno)
-cd client/web
-deno task dev
-----
+* Elixir 1.17+ / Erlang/OTP 26+
+* Zig 0.15+ (for coprocessor NIFs)
+* Deno (for web client)
+* VeriSimDB (database — run on port 8080)
 
-== Development
+=== Development Setup
 
 [source,bash]
 ----
-just dev          # Start server + web client
-just test         # Run all tests
-just build        # Production build
+# 1. Start VeriSimDB
+cd ../nextgen-databases/verisimdb && cargo run
+
+# 2. Build Zig coprocessor NIFs
+cd ffi/zig && zig build -Doptimize=ReleaseFast
+cp zig-out/lib/libburble_coprocessor.so ../../server/priv/
+
+# 3. Start Elixir server
+cd server && mix deps.get && mix phx.server
+# → http://localhost:4000
+
+# 4. Start web client (separate terminal)
+cd client/web && deno task dev
+# → http://localhost:5173
+----
+
+=== Container Deployment (one command)
+
+[source,bash]
+----
+cd containers
+podman-compose -f compose.toml up
+# → Server on :4000, Web on :8080, VeriSimDB on :8081
+----
+
+=== Run Tests
+
+[source,bash]
+----
+cd server && mix test --no-start    # 49 tests, 0 failures
+cd ffi/zig && zig build test        # Zig coprocessor unit tests
+mix bench.coprocessor               # Elixir vs Zig performance benchmarks
 ----
 
 == Repository Structure
@@ -96,12 +120,55 @@ just build        # Production build
 | `protocol/`
 | Protobuf wire protocol definitions
 
+| `ffi/zig/`
+| SIMD coprocessor NIFs (audio, DSP, neural, compression — 26,350x LZ4 speedup)
+
+| `src/abi/`
+| Idris2 ABI definitions (dependent type proofs for coprocessor interfaces)
+
 | `containers/`
-| Containerfile and deployment configs
+| Containerfiles + compose.toml (Chainguard images, Podman/Selur-compose)
 
 | `.machine_readable/`
-| A2ML project state files
+| SCM checkpoint files (STATE.scm, META.scm, ECOSYSTEM.scm)
 |===
+
+== Topology Modes
+
+Burble supports four deployment topologies (set via `BURBLE_TOPOLOGY` env var):
+
+[cols="1,1,1,1,1"]
+|===
+| Feature | Monarchic | Oligarchic | Distributed | Serverless
+
+| **Default** | Yes | | |
+| **Store** | VeriSimDB | Federated | Federated | None
+| **E2EE** | Optional | Optional | Recommended | Mandatory
+| **Recording** | Yes | Yes | Per-server | No
+| **Moderation** | Full | Full | Per-server | None
+| **Federation** | No | Cluster | Open | N/A
+|===
+
+== Coprocessor Performance
+
+SIMD-accelerated audio processing via Zig NIFs:
+
+[cols="1,1,1,1"]
+|===
+| Operation | Elixir | Zig | Speedup
+
+| LZ4 compress | 83ms | 3.1µs | 26,350x
+| Echo cancel | 19.4ms | 310µs | 62x
+| FFT (256pt) | 826µs | 22µs | 37x
+| Convolution | 300µs | 11µs | 27x
+| Neural denoise | 54µs | 9µs | 6x
+|===
+
+== Bridges
+
+* **Mumble/Murmur** — bidirectional voice relay (interop, not migration)
+* **Jitsi** — planned (native WebRTC interop)
+* **Matrix** — planned (via Matrix bridge protocol)
 
 == License
 

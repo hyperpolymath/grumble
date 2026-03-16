@@ -40,6 +40,12 @@ defmodule Burble.Application do
       # Room registry — maps room IDs to PIDs
       {Registry, keys: :unique, name: Burble.RoomRegistry},
 
+      # WebRTC peer registry — maps peer IDs to Peer GenServer PIDs
+      {Registry, keys: :unique, name: Burble.PeerRegistry},
+
+      # WebRTC peer supervisor — one Peer GenServer per active participant
+      {DynamicSupervisor, name: Burble.PeerSupervisor, strategy: :one_for_one},
+
       # Coprocessor pipeline registry — maps peer IDs to pipeline PIDs
       {Registry, keys: :unique, name: Burble.CoprocessorRegistry},
 

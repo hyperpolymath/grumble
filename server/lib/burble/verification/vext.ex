@@ -195,18 +195,29 @@ defmodule Burble.Verification.Vext do
   end
 
   defp sign_chain_hash(chain_hash) do
-    # TODO: Use server's Ed25519 private key for real signatures.
-    # For now, HMAC with a server secret as a placeholder.
-    secret = Application.get_env(:burble, :vext_signing_key, "dev_signing_key")
-    :crypto.mac(:hmac, :sha256, secret, chain_hash) |> Base.encode16(case: :lower)
+    {_pub, priv} = get_ed25519_keypair()
+    :crypto.sign(:eddsa, :none, chain_hash, [priv, :ed25519]) |> Base.encode16(case: :lower)
   end
 
   defp verify_signature(chain_hash, signature) do
-    expected = sign_chain_hash(chain_hash)
-    # Constant-time comparison to prevent timing attacks
-    :crypto.hash_equals(expected, signature)
+    {pub, _priv} = get_ed25519_keypair()
+    sig_bytes = Base.decode16!(signature, case: :lower)
+    :crypto.verify(:eddsa, :none, chain_hash, sig_bytes, [pub, :ed25519])
   rescue
-    # If comparison fails (different lengths, etc.), signature is invalid
     _ -> false
+  end
+
+  # Shared Ed25519 keypair (same as Avow — single server identity).
+  defp get_ed25519_keypair do
+    case Application.get_env(:burble, :ed25519_private_key) do
+      nil ->
+        seed = :crypto.hash(:sha256, "burble_dev_ed25519_seed") |> binary_part(0, 32)
+        :crypto.generate_key(:eddsa, :ed25519, seed)
+
+      private_key_hex ->
+        priv = Base.decode16!(private_key_hex, case: :lower)
+        {pub, _} = :crypto.generate_key(:eddsa, :ed25519, priv)
+        {pub, priv}
+    end
   end
 end

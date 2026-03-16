@@ -62,6 +62,10 @@ defmodule BurbleWeb.RoomChannel do
           # Avow consent attestation for the join.
           Avow.attest_join(user_id, room_id, :direct_join)
 
+          # Start WebRTC peer via Media.Engine (passes self() as channel_pid
+          # so the Peer GenServer can send SDP offers and ICE candidates back).
+          Burble.Media.Engine.add_peer(room_id, user_id, channel_pid: self())
+
           # Audit log.
           Audit.log(:room_join, user_id, %{room_id: room_id})
 
@@ -78,6 +82,19 @@ defmodule BurbleWeb.RoomChannel do
           {:error, %{reason: reason}}
       end
     end
+  end
+
+  # Messages from the Peer GenServer — relay to client.
+  @impl true
+  def handle_info({:peer_sdp_offer, sdp}, socket) do
+    push(socket, "sdp_offer", %{body: sdp})
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:peer_ice_candidate, candidate_json}, socket) do
+    push(socket, "ice_candidate", %{body: candidate_json})
+    {:noreply, socket}
   end
 
   @impl true
@@ -127,11 +144,27 @@ defmodule BurbleWeb.RoomChannel do
     end
   end
 
-  # ── WebRTC signaling ──
+  # ── WebRTC signaling (server-mediated SFU) ──
 
   @impl true
+  def handle_in("sdp_answer", %{"body" => body}, socket) do
+    # Client sends SDP answer in response to server's offer.
+    peer_id = socket.assigns.user_id
+    Burble.Media.Peer.apply_sdp_answer(peer_id, body)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_in("ice_candidate", %{"body" => body}, socket) do
+    # Client sends ICE candidate.
+    peer_id = socket.assigns.user_id
+    Burble.Media.Peer.add_ice_candidate(peer_id, body)
+    {:noreply, socket}
+  end
+
+  # Legacy P2P signaling (kept for fallback/serverless mode).
+  @impl true
   def handle_in("signal", %{"to" => target_id, "type" => type, "payload" => payload}, socket) do
-    # Forward signaling message to the target peer.
     broadcast!(socket, "signal", %{
       from: socket.assigns.user_id,
       to: target_id,

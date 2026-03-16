@@ -73,8 +73,8 @@ defmodule Burble.MixProject do
       # Rate limiting
       {:hammer, "~> 6.2"},
 
-      # Media plane — ex_webrtc for MVP, Membrane full stack later
-      {:ex_webrtc, "~> 0.9"},
+      # Media plane — ex_webrtc SFU (audio-only, Opus)
+      {:ex_webrtc, "~> 0.16"},
 
       # CORS for web client
       {:corsica, "~> 2.1"},

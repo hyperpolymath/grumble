@@ -255,18 +255,31 @@ defmodule Burble.Verification.Avow do
   end
 
   defp sign_attestation(proof_hash) do
-    # TODO: Replace with Ed25519 via Zig NIF calling Avow's Idris2 ABI
-    secret = Application.get_env(:burble, :avow_signing_key, "dev_avow_key")
-    :crypto.mac(:hmac, :sha256, secret, proof_hash) |> Base.encode16(case: :lower)
+    {_pub, priv} = get_ed25519_keypair()
+    :crypto.sign(:eddsa, :none, proof_hash, [priv, :ed25519]) |> Base.encode16(case: :lower)
   end
 
   defp verify_signature(hash, signature) do
-    expected = sign_attestation(hash)
+    {pub, _priv} = get_ed25519_keypair()
+    sig_bytes = Base.decode16!(signature, case: :lower)
+    :crypto.verify(:eddsa, :none, hash, sig_bytes, [pub, :ed25519])
+  end
 
-    try do
-      :crypto.hash_equals(expected, signature)
-    rescue
-      _ -> false
+  # Get or generate the Ed25519 keypair for this server.
+  # In production, load from BURBLE_ED25519_PRIVATE_KEY env var.
+  # In dev, generate a deterministic keypair from a seed.
+  defp get_ed25519_keypair do
+    case Application.get_env(:burble, :ed25519_private_key) do
+      nil ->
+        # Dev fallback: derive deterministic keypair from a seed.
+        seed = :crypto.hash(:sha256, "burble_dev_ed25519_seed") |> binary_part(0, 32)
+        {pub, priv} = :crypto.generate_key(:eddsa, :ed25519, seed)
+        {pub, priv}
+
+      private_key_hex ->
+        priv = Base.decode16!(private_key_hex, case: :lower)
+        {pub, _} = :crypto.generate_key(:eddsa, :ed25519, priv)
+        {pub, priv}
     end
   end
 

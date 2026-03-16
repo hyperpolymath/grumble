@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Clade declaration — part of the gv-clade-index registry
+# See: https://github.com/hyperpolymath/gv-clade-index
+
+[identity]
+uuid = "0a37e17d-8ee5-5c30-9daf-571315a88a84"
+primary-forge = "github"
+primary-owner = "hyperpolymath"
+canonical-name = "burble"
+prefixed-name = "ap-burble"
+
+[clade]
+primary = "ap"
+secondary = ["pt"]
+assigned = "2026-03-16"
+rationale = ""
+
+[forges]
+github = "hyperpolymath/burble"
+gitlab = "hyperpolymath/burble"
+bitbucket = "hyperpolymath/burble"
+
+[lineage]
+type = "standalone"
+parent = "Voice platform — Elixir control plane, WebRTC media"
+born = "2026-03-16"

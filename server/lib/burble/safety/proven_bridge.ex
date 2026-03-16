@@ -154,7 +154,15 @@ defmodule Burble.Safety.ProvenBridge do
   @doc "Check whether the proven NIF library is loaded and functional."
   @spec proven_available?() :: boolean()
   def proven_available? do
-    Code.ensure_loaded?(Proven.SafeCrypto)
+    Code.ensure_loaded?(Proven.NIF) and
+      try do
+        Proven.SafeCrypto.constant_time_compare("a", "a")
+        true
+      rescue
+        _ -> false
+      catch
+        _, _ -> false
+      end
   rescue
     _ -> false
   end

@@ -34,15 +34,21 @@ NEVER create STATE.a2ml, META.a2ml, or ECOSYSTEM.a2ml in the repository root.
 
 ```
 burble/
-├── server/          # Elixir/Phoenix control plane (OTP)
-├── media/           # Media plane (WebRTC SFU)
+├── server/              # Elixir/Phoenix control plane (OTP)
+│   ├── lib/burble/      # Core modules (auth, rooms, store, coprocessor, etc.)
+│   ├── lib/burble_web/  # Phoenix web layer (controllers, channels, router)
+│   ├── lib/mix/tasks/   # Mix tasks (bench.coprocessor)
+│   ├── test/            # ExUnit test suite (49 tests)
+│   └── priv/            # Static assets + Zig NIF .so
 ├── client/
-│   ├── web/         # ReScript web client (first-class)
-│   ├── desktop/     # Tauri 2 desktop wrapper
-│   └── lib/         # Embeddable client library (IDApTIK, PanLL)
-├── protocol/        # Protobuf wire protocol
-├── containers/      # Containerfile + deployment configs
-└── .machine_readable/
+│   ├── web/             # ReScript web client (Deno + Vite)
+│   ├── lib/             # Embeddable client library (@burble/client)
+│   │   └── src/extensions/  # IDApTIKVoice, PanLLVoice
+│   └── desktop/         # Tauri 2 desktop wrapper (stub)
+├── ffi/zig/             # SIMD coprocessor NIFs (audio, DSP, neural, compression)
+├── src/abi/             # Idris2 ABI definitions (Types.idr, Foreign.idr)
+├── containers/          # Containerfiles + compose.toml
+└── .machine_readable/   # STATE.scm, META.scm, ECOSYSTEM.scm
 ```
 
 ## INTEGRATION
@@ -54,8 +60,27 @@ Burble serves three roles:
 
 ## DOGFOODING
 
-Use hyperpolymath tools where they naturally fit:
-- VeriSimDB for audit/telemetry
-- Stapeln for containers
-- Hypatia for security scanning
-- Contractile/K9 for deployment
+Active hyperpolymath tool integrations:
+- **VeriSimDB** — sole data store (users, tokens, configs, provenance)
+- **proven** — verified crypto, password, UUID, email, path safety
+- **Avow** — consent attestation on room join/leave
+- **Vext** — hash chain integrity on text feed
+- **Stapeln** — Containerfiles for Svalinn/Vordr deployment
+- **Axiom.jl** — coprocessor backend pattern
+- **Ephapax** — linear type opportunities documented (Phase 2)
+- **panic-attack** — assail scanning on Zig code
+
+## TOPOLOGY MODES
+
+Burble supports four deployment topologies (config: `BURBLE_TOPOLOGY`):
+- **monarchic** (default) — single server, full trust
+- **oligarchic** — distributed Erlang cluster, VeriSimDB federation
+- **distributed** — federated independent servers, Vext integrity
+- **serverless** — P2P only, E2EE mandatory
+
+## DATABASE
+
+VeriSimDB is the sole data store. No PostgreSQL/Ecto.
+- Store module: `Burble.Store` (GenServer wrapping VeriSimClient)
+- Users, magic links, invites, room configs, server configs all as octads
+- Provenance modality for audit trail on all entities

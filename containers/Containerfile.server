@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# Burble Server — Elixir OTP release with Zig coprocessor NIFs.
+#
+# Build:  podman build -t burble-server:latest -f containers/Containerfile.server .
+# Run:    podman run --rm -p 4000:4000 -e SECRET_KEY_BASE=... -e VERISIMDB_URL=... burble-server:latest
+# Seal:   selur seal burble-server:latest
+
+# --- Build stage: Elixir + Zig ---
+FROM cgr.dev/chainguard/wolfi-base:latest AS build
+
+RUN apk add --no-cache elixir erlang-dev zig gcc musl-dev make
+
+WORKDIR /build
+
+# Elixir deps first (cache layer).
+COPY server/mix.exs server/mix.lock ./server/
+WORKDIR /build/server
+RUN mix local.hex --force && mix local.rebar --force
+RUN MIX_ENV=prod mix deps.get --only prod
+RUN MIX_ENV=prod mix deps.compile
+
+# Zig NIFs.
+WORKDIR /build
+COPY ffi/zig/ ./ffi/zig/
+WORKDIR /build/ffi/zig
+RUN zig build -Doptimize=ReleaseFast
+RUN cp zig-out/lib/libburble_coprocessor.so /build/server/priv/burble_coprocessor.so
+
+# Elixir app.
+WORKDIR /build/server
+COPY server/lib/ ./lib/
+COPY server/config/ ./config/
+COPY server/priv/ ./priv/
+RUN MIX_ENV=prod mix compile
+RUN MIX_ENV=prod mix release
+
+# --- Runtime stage ---
+FROM cgr.dev/chainguard/wolfi-base:latest AS runtime
+
+RUN apk add --no-cache erlang ncurses-libs libstdc++
+
+# Non-root user.
+RUN adduser -D -u 1000 burble
+USER burble
+
+COPY --from=build --chown=burble:burble /build/server/_build/prod/rel/burble /app/
+
+WORKDIR /app
+
+ENV PHX_SERVER=true
+ENV PORT=4000
+EXPOSE 4000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -q --spider http://localhost:4000/api/v1/auth/guest || exit 1
+
+ENTRYPOINT ["/app/bin/burble"]
+CMD ["start"]

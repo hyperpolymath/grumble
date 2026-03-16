@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# Burble Web Client — ReScript SPA served by nginx.
+#
+# Build:  podman build -t burble-web:latest -f containers/Containerfile.web .
+# Run:    podman run --rm -p 8080:80 burble-web:latest
+
+# --- Build stage: Deno + ReScript + Vite ---
+FROM cgr.dev/chainguard/wolfi-base:latest AS build
+
+RUN apk add --no-cache nodejs npm
+
+WORKDIR /build
+COPY client/web/ ./
+
+RUN npm install
+RUN npx rescript build
+RUN npx vite build
+
+# --- Runtime stage: nginx ---
+FROM cgr.dev/chainguard/nginx:latest
+
+COPY --from=build /build/dist/ /usr/share/nginx/html/
+
+EXPOSE 80

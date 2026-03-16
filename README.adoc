@@ -130,7 +130,7 @@ mix bench.coprocessor               # Elixir vs Zig performance benchmarks
 | Containerfiles + compose.toml (Chainguard images, Podman/Selur-compose)
 
 | `.machine_readable/`
-| SCM checkpoint files (STATE.scm, META.scm, ECOSYSTEM.scm)
+| SCM checkpoint files (.machine_readable/6a2/STATE.a2ml, .machine_readable/6a2/META.a2ml, .machine_readable/6a2/ECOSYSTEM.a2ml)
 |===
 
 == Topology Modes

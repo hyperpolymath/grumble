@@ -25,6 +25,18 @@
 - [ ] Idris2 ABI definitions for coprocessor interfaces
 - [ ] Zig FFI NIFs for BEAM integration (hot path)
 
+### VeriSimDB integration (dogfooding)
+- [x] Replace PostgreSQL/Ecto with VeriSimDB for user accounts
+- [x] Burble.Store GenServer wrapping VeriSimClient
+- [x] User validation without Ecto (pure struct + validation)
+- [x] Provenance modality for auth audit trail
+- [ ] Store magic link tokens (temporal modality for expiry)
+- [ ] Store invite tokens in VeriSimDB (replace in-memory)
+- [ ] Audit log queries via VeriSimDB provenance chains
+- [ ] Room config persistence (document modality)
+- [ ] Server/guild config persistence
+- [ ] Delete old Ecto migration and Repo stub after verification
+
 ## Medium term
 
 ### Server hardening
@@ -32,7 +44,6 @@
 - [ ] Implement proper Guardian JWT auth (replace Phoenix.Token)
 - [ ] Add magic link email sending (currently stub)
 - [ ] Server-side recording (operator-approved)
-- [ ] Proper invite token storage in database (currently in-memory)
 
 ### Integration
 - [ ] Embeddable client library (client/lib/) for IDApTIK and PanLL
@@ -52,9 +63,10 @@
 - [ ] Zig FFI bridge from BEAM to Idris2 ABI
 
 ### Deployment
-- [ ] Containerfile for game (nginx + static)
-- [ ] Containerfile for sync-server (Elixir OTP release)
-- [ ] podman-compose for one-command deployment
+- [ ] Containerfile for web client (nginx + static)
+- [ ] Containerfile for server (Elixir OTP release)
+- [ ] Containerfile for VeriSimDB (Rust core)
+- [ ] podman-compose for one-command deployment (server + verisimdb)
 - [ ] Production multi-node reference deployment docs
 
 ## Long term
@@ -72,8 +84,9 @@
 
 ## Notes
 
-- Postgres container is still named `grumble-postgres` (rename or recreate)
-- DB name is `burble_dev` (already renamed in config)
+- VeriSimDB replaces PostgreSQL — run VeriSimDB on port 8080 before starting Burble
 - Dev user: dev@burble.local / burble_dev_123
 - Contractiles: 23/23 must checks passing
 - Run with: `cd server && mix phx.server` → http://localhost:4000/
+- VeriSimDB: `cd nextgen-databases/verisimdb && cargo run` → http://localhost:8080/
+- Old Repo stub kept in lib/grumble/repo.ex — delete after full verification

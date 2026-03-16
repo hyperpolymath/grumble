@@ -2,14 +2,11 @@
 
 import Config
 
-config :burble, Burble.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "burble_dev",
-  stacktrace: true,
-  show_sensitive_data_on_connection_error: true,
-  pool_size: 10
+# VeriSimDB for development — local instance on default port.
+config :burble, Burble.Store,
+  url: "http://localhost:8080",
+  auth: :none,
+  timeout: 30_000
 
 config :burble, BurbleWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4000],

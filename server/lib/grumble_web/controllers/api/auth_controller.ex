@@ -11,8 +11,11 @@ defmodule BurbleWeb.API.AuthController do
         token = Phoenix.Token.sign(BurbleWeb.Endpoint, "user_auth", user.id)
         json(conn, %{user_id: user.id, display_name: user.display_name, token: token})
 
-      {:error, changeset} ->
-        conn |> put_status(422) |> json(%{errors: format_errors(changeset)})
+      {:error, errors} when is_map(errors) ->
+        conn |> put_status(422) |> json(%{errors: errors})
+
+      {:error, reason} ->
+        conn |> put_status(422) |> json(%{errors: %{base: [inspect(reason)]}})
     end
   end
 
@@ -43,13 +46,5 @@ defmodule BurbleWeb.API.AuthController do
 
   def logout(conn, _params) do
     json(conn, %{status: "logged_out"})
-  end
-
-  defp format_errors(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-      end)
-    end)
   end
 end

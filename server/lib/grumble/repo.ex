@@ -1,15 +1,23 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 #
-# Burble.Repo — Ecto repository for PostgreSQL.
+# Burble.Repo — REMOVED.
 #
-# Stores persistent data: user accounts, server configs, room configs,
-# role definitions, audit logs, invite tokens.
-#
-# Dogfooding note: audit log and session telemetry are candidates
-# for VeriSimDB integration when that project matures.
+# PostgreSQL/Ecto has been replaced by VeriSimDB (Burble.Store).
+# This file is kept temporarily so any compile errors point here.
+# See: lib/grumble/store.ex
 
 defmodule Burble.Repo do
-  use Ecto.Repo,
-    otp_app: :burble,
-    adapter: Ecto.Adapters.Postgres
+  @moduledoc """
+  **Deprecated** — PostgreSQL/Ecto has been replaced by VeriSimDB.
+
+  All persistence now goes through `Burble.Store`. This module is a
+  no-op stub retained only to surface clear compile errors if any code
+  still references it.
+  """
+
+  @deprecated "Use Burble.Store instead — PostgreSQL has been replaced by VeriSimDB"
+  def get_by(_schema, _clauses), do: raise("Burble.Repo removed — use Burble.Store")
+
+  @deprecated "Use Burble.Store instead — PostgreSQL has been replaced by VeriSimDB"
+  def insert(_changeset), do: raise("Burble.Repo removed — use Burble.Store")
 end

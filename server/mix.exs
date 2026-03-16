@@ -4,6 +4,8 @@
 #
 # OTP supervision tree managing auth, rooms, presence, permissions,
 # moderation, signaling, telemetry, and audit logging.
+#
+# Persistence via VeriSimDB (dogfooding the hyperpolymath database).
 
 defmodule Burble.MixProject do
   use Mix.Project
@@ -57,9 +59,8 @@ defmodule Burble.MixProject do
       {:guardian, "~> 2.3"},
       {:jose, "~> 1.11"},
 
-      # Database (user accounts, room config, audit logs)
-      {:ecto_sql, "~> 3.12"},
-      {:postgrex, ">= 0.0.0"},
+      # Persistent store — VeriSimDB (dogfooding)
+      {:verisim_client, path: "../../nextgen-databases/verisimdb/connectors/clients/elixir"},
 
       # Telemetry and observability
       {:telemetry_metrics, "~> 1.0"},
@@ -79,7 +80,6 @@ defmodule Burble.MixProject do
       {:protobuf, "~> 0.13"},
 
       # Dev/test
-      {:phoenix_ecto, "~> 4.6"},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
@@ -90,10 +90,8 @@ defmodule Burble.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup"],
-      "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
-      "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
+      setup: ["deps.get"],
+      test: ["test"]
     ]
   end
 end

@@ -3,7 +3,7 @@
 # Burble.Application — OTP supervision tree root.
 #
 # Starts the core services in dependency order:
-#   1. Database (Ecto Repo)
+#   1. Persistent store (VeriSimDB via Burble.Store)
 #   2. PubSub (Phoenix.PubSub for room events)
 #   3. Presence tracker (who's in which room)
 #   4. Room registry (named process per active room)
@@ -15,7 +15,7 @@ defmodule Burble.Application do
   OTP Application for Burble voice server.
 
   The supervision tree is structured so that:
-  - Database failures don't crash the web endpoint
+  - VeriSimDB store failures don't crash the web endpoint
   - Room processes are isolated (one room crash doesn't affect others)
   - Telemetry is always running for observability
   """
@@ -25,8 +25,8 @@ defmodule Burble.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Database
-      Burble.Repo,
+      # Persistent store (VeriSimDB)
+      Burble.Store,
 
       # PubSub for real-time events (room join/leave, voice state changes)
       {Phoenix.PubSub, name: Burble.PubSub},

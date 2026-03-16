@@ -19,7 +19,7 @@ defmodule BurbleWeb.API.RoomController do
   end
 
   def create(conn, %{"server_id" => server_id} = params) do
-    room_id = Map.get(params, "room_id", Ecto.UUID.generate())
+    room_id = Map.get(params, "room_id", generate_uuid())
     name = Map.get(params, "name", "New Room")
 
     case RoomManager.start_room(room_id, server_id: server_id, name: name) do
@@ -40,5 +40,13 @@ defmodule BurbleWeb.API.RoomController do
       {:ok, %{participants: p}} -> json(conn, %{participants: p})
       {:error, _} -> conn |> put_status(404) |> json(%{error: "room_not_found"})
     end
+  end
+
+  # Generate a v4 UUID without Ecto dependency.
+  defp generate_uuid do
+    <<a::48, _::4, b::12, _::2, c::62>> = :crypto.strong_rand_bytes(16)
+    <<a::48, 4::4, b::12, 2::2, c::62>>
+    |> Base.encode16(case: :lower)
+    |> String.replace(~r/(.{8})(.{4})(.{4})(.{4})(.{12})/, "\\1-\\2-\\3-\\4-\\5")
   end
 end

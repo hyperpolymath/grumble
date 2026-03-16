@@ -2,13 +2,11 @@
 
 import Config
 
-config :burble, Burble.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "burble_test#{System.get_env("MIX_TEST_PARTITION")}",
-  pool: Ecto.Adapters.SQL.Sandbox,
-  pool_size: System.schedulers_online() * 2
+# VeriSimDB for tests — use a separate port or test instance if available.
+config :burble, Burble.Store,
+  url: "http://localhost:8081",
+  auth: :none,
+  timeout: 10_000
 
 config :burble, BurbleWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],

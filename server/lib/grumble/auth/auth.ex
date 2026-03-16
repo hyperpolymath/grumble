@@ -9,6 +9,8 @@
 #   - MFA for admins (TOTP)
 #
 # Sessions are JWT-based via Guardian, with refresh token rotation.
+#
+# Persistence is backed by VeriSimDB via Burble.Store.
 
 defmodule Burble.Auth do
   @moduledoc """
@@ -17,26 +19,36 @@ defmodule Burble.Auth do
   Handles user registration, login, guest access, and session management.
   """
 
-  alias Burble.Repo
+  alias Burble.Store
   alias Burble.Auth.User
 
   @doc "Register a new user account."
   def register_user(attrs) do
-    %User{}
-    |> User.registration_changeset(attrs)
-    |> Repo.insert()
+    case User.validate_registration(attrs) do
+      {:ok, validated} ->
+        case Store.create_user(validated) do
+          {:ok, user_map} -> {:ok, User.from_map(user_map)}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, errors} ->
+        {:error, errors}
+    end
   end
 
   @doc "Authenticate by email and password."
   def authenticate_by_email(email, password) do
-    case Repo.get_by(User, email: String.downcase(email)) do
-      nil ->
-        # Constant-time comparison to prevent timing attacks
+    case Store.get_user_by_email(String.downcase(email)) do
+      {:error, :not_found} ->
+        # Constant-time comparison to prevent timing attacks.
         Bcrypt.no_user_verify()
         {:error, :invalid_credentials}
 
-      user ->
+      {:ok, user_map} ->
+        user = User.from_map(user_map)
+
         if Bcrypt.verify_pass(password, user.password_hash) do
+          Store.record_user_event(user.id, "login_success", %{})
           {:ok, user}
         else
           {:error, :invalid_credentials}
@@ -60,8 +72,8 @@ defmodule Burble.Auth do
   @doc "Generate a magic link token for passwordless login."
   def generate_magic_link(email) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-    # Store token with expiry (15 minutes)
-    # TODO: implement token storage in database
+    # TODO: store magic link token in VeriSimDB (temporal modality for expiry)
+    _ = email
     {:ok, token}
   end
 

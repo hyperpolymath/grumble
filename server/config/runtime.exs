@@ -9,19 +9,23 @@ if System.get_env("PHX_SERVER") do
 end
 
 if config_env() == :prod do
-  database_url =
-    System.get_env("DATABASE_URL") ||
+  verisimdb_url =
+    System.get_env("VERISIMDB_URL") ||
       raise """
-      environment variable DATABASE_URL is missing.
-      For example: ecto://USER:PASS@HOST/DATABASE
+      environment variable VERISIMDB_URL is missing.
+      For example: http://verisimdb:8080
       """
 
-  maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
+  verisimdb_auth =
+    case System.get_env("VERISIMDB_API_KEY") do
+      nil -> :none
+      key -> {:api_key, key}
+    end
 
-  config :burble, Burble.Repo,
-    url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    socket_options: maybe_ipv6
+  config :burble, Burble.Store,
+    url: verisimdb_url,
+    auth: verisimdb_auth,
+    timeout: String.to_integer(System.get_env("VERISIMDB_TIMEOUT") || "30000")
 
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||

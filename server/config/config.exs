@@ -4,10 +4,6 @@
 
 import Config
 
-config :burble,
-  ecto_repos: [Burble.Repo],
-  generators: [timestamp_type: :utc_datetime]
-
 config :burble, BurbleWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
@@ -17,6 +13,12 @@ config :burble, BurbleWeb.Endpoint,
   ],
   pubsub_server: Burble.PubSub,
   live_view: [signing_salt: "burble_lv"]
+
+# VeriSimDB persistent store
+config :burble, Burble.Store,
+  url: "http://localhost:8080",
+  auth: :none,
+  timeout: 30_000
 
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",

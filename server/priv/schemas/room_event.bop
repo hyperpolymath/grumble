@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+//
+// room_event.bop — Bebop schema for Burble room lifecycle events.
+//
+// These events are broadcast by the server to all participants in a room
+// (or to specific participants where noted). They describe state changes
+// that affect the room as a whole — membership changes, voice state
+// transitions, and configuration updates.
+//
+// Room events are sent over the reliable signaling stream (not the
+// unreliable voice datagram channel) to guarantee delivery and ordering.
+
+// ---------------------------------------------------------------------------
+// Enumerations
+// ---------------------------------------------------------------------------
+
+/// The type of room, which determines media topology and permissions.
+enum RoomType : uint8 {
+  /// Standard voice room — all participants can speak (SFU mesh).
+  Voice = 1;
+  /// Stage room — speakers and listeners, raise-hand protocol.
+  Stage = 2;
+  /// Broadcast room — one-to-many, RTSP distribution (screen share, CCTV).
+  Broadcast = 3;
+  /// Spatial room — 3D positional audio (IDApTIK game world, BurbleSpatial).
+  Spatial = 4;
+}
+
+/// Reason a participant left the room.
+enum LeaveReason : uint8 {
+  /// Voluntary disconnect (user clicked "Leave").
+  Voluntary = 0;
+  /// Kicked by a moderator.
+  Kicked = 1;
+  /// Banned from the room (persisted in VeriSimDB).
+  Banned = 2;
+  /// Connection timeout — no heartbeat for >30 seconds.
+  Timeout = 3;
+  /// Server shutdown — graceful drain.
+  ServerShutdown = 4;
+}
+
+/// Permission level for a participant in the room.
+enum ParticipantRole : uint8 {
+  /// Listener — can hear but not speak (stage/broadcast rooms).
+  Listener = 0;
+  /// Speaker — can transmit audio.
+  Speaker = 1;
+  /// Moderator — can mute/kick/ban others, change room config.
+  Moderator = 2;
+  /// Owner — full control, can promote moderators, delete room.
+  Owner = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Shared data structures
+// ---------------------------------------------------------------------------
+
+/// Snapshot of a participant's current voice state, included in join events
+/// so new participants can render the correct UI immediately.
+struct VoiceState {
+  /// Whether the participant is currently muted.
+  bool muted;
+  /// Whether the participant is currently deafened.
+  bool deafened;
+  /// Whether the participant is currently speaking (VAD active).
+  bool speaking;
+  /// Whether the participant is streaming video/screen share.
+  bool streaming;
+  /// Self-muted vs server-muted distinction.
+  uint8 muteType;
+}
+
+/// A participant descriptor — included in join/leave events.
+struct Participant {
+  /// Opaque user identifier (UUID v7 from VeriSimDB).
+  string userId;
+  /// Display name for this session.
+  string displayName;
+  /// Avatar URL (optional — may be empty string if no avatar set).
+  string avatarUrl;
+  /// Role in this room.
+  ParticipantRole role;
+  /// Current voice state.
+  VoiceState voiceState;
+}
+
+/// Room configuration — sent on join and when config changes.
+struct RoomConfig {
+  /// Room identifier (UUID v7).
+  string roomId;
+  /// Human-readable room name.
+  string name;
+  /// Room type (voice, stage, broadcast, spatial).
+  RoomType roomType;
+  /// Maximum participants allowed (0 = unlimited).
+  uint32 maxParticipants;
+  /// Bitrate limit in bits/second (0 = server default, typically 64000 for Opus).
+  uint32 bitrate;
+  /// Whether end-to-end encryption is enforced (Insertable Streams).
+  bool e2eeRequired;
+  /// Whether server-side recording is active (requires Avow consent).
+  bool recordingActive;
+  /// Whether spatial audio is enabled for this room.
+  bool spatialAudio;
+  /// Region hint for server selection (e.g., "eu-west", "us-east").
+  string region;
+}
+
+// ---------------------------------------------------------------------------
+// Room events
+// ---------------------------------------------------------------------------
+
+/// A new participant has joined the room.
+///
+/// Broadcast to all existing participants. New joiners receive one
+/// ParticipantJoined event per existing member (backfill).
+message ParticipantJoined {
+  /// Room this event pertains to.
+  1 -> string roomId;
+  /// The participant who joined.
+  2 -> Participant participant;
+  /// ISO 8601 timestamp of the join.
+  3 -> string timestamp;
+  /// Current participant count after this join.
+  4 -> uint32 participantCount;
+}
+
+/// A participant has left the room.
+///
+/// Broadcast to all remaining participants. The server tears down the
+/// PeerConnection and releases SFU resources for this participant.
+message ParticipantLeft {
+  1 -> string roomId;
+  /// The user who left.
+  2 -> string userId;
+  /// Why they left (voluntary, kicked, timeout, etc.).
+  3 -> LeaveReason reason;
+  /// ISO 8601 timestamp of the departure.
+  4 -> string timestamp;
+  /// Current participant count after this leave.
+  5 -> uint32 participantCount;
+}
+
+/// A participant's voice state has changed (mute, deafen, speaking, role).
+///
+/// Broadcast to all participants so they can update their UI indicators.
+message VoiceStateChanged {
+  1 -> string roomId;
+  2 -> string userId;
+  /// The new voice state snapshot.
+  3 -> VoiceState voiceState;
+  /// New role (included because role changes affect voice permissions).
+  4 -> ParticipantRole role;
+  /// ISO 8601 timestamp of the state change.
+  5 -> string timestamp;
+}
+
+/// The room configuration has been updated by a moderator or owner.
+///
+/// Broadcast to all participants. Clients should re-render room settings
+/// and adapt behaviour (e.g., enable/disable spatial audio, enforce E2EE).
+message RoomConfigUpdated {
+  1 -> string roomId;
+  /// The full updated configuration (not a diff — always a complete snapshot).
+  2 -> RoomConfig config;
+  /// User ID of the moderator/owner who made the change.
+  3 -> string changedBy;
+  /// ISO 8601 timestamp of the configuration change.
+  4 -> string timestamp;
+}
+
+// ---------------------------------------------------------------------------
+// Discriminated union — all room events in one envelope
+// ---------------------------------------------------------------------------
+
+/// Top-level envelope for room lifecycle events. Exactly one variant is set
+/// per wire message. The Bebop discriminator tag costs 1 byte on the wire.
+union RoomEvent {
+  1 -> ParticipantJoined participantJoined;
+  2 -> ParticipantLeft participantLeft;
+  3 -> VoiceStateChanged voiceStateChanged;
+  4 -> RoomConfigUpdated roomConfigUpdated;
+}

@@ -1,140 +1,578 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
 //
 // VoiceEngine — WebRTC voice connection to Burble SFU.
 //
 // Handles the client side of the voice pipeline:
 //   1. getUserMedia for microphone access
 //   2. RTCPeerConnection to the Burble SFU
-//   3. Server sends sdp_offer, client sends sdp_answer
-//   4. ICE candidate exchange (TURN-only in privacy mode)
-//   5. Opus audio encoding/decoding (browser-native)
-//   6. Audio level monitoring (for speaking indicators)
-//   7. Push-to-talk / VAD switching
-//   8. Per-user volume control (on received streams)
+//   3. Phoenix WebSocket channel for signaling (ws://localhost:6473/voice)
+//   4. Server sends sdp_offer, client sends sdp_answer
+//   5. ICE candidate exchange (TURN-only in privacy mode)
+//   6. Opus audio encoding/decoding (browser-native)
+//   7. Audio level monitoring via AnalyserNode (speaking indicators)
+//   8. Push-to-talk / VAD switching with configurable PTT key
+//   9. Per-user volume control on received streams
+//  10. Client-side coprocessor pipeline: noise gate, echo cancel, AGC
+//      via AudioWorklet (with ScriptProcessor fallback)
 //
 // The voice engine is framework-agnostic — it manages WebRTC state
 // and exposes callbacks. The UI layer subscribes to state changes.
 
-/// Voice connection state.
+// ---------------------------------------------------------------------------
+// Type definitions
+// ---------------------------------------------------------------------------
+
+/// Voice connection state — tracks the lifecycle of the WebRTC session.
 type connectionState =
-  | Disconnected
-  | Connecting
-  | Connected
-  | Reconnecting
-  | Failed(string)
+  | /// No active voice connection.
+    Disconnected
+  | /// WebRTC negotiation in progress.
+    Connecting
+  | /// Fully connected and streaming audio.
+    Connected
+  | /// Temporarily lost connection, attempting recovery.
+    Reconnecting
+  | /// Connection failed with an error message.
+    Failed(string)
 
-/// Voice input mode.
+/// Voice input mode — determines how the user's audio is transmitted.
 type inputMode =
-  | VoiceActivity
-  | PushToTalk
+  | /// Continuous transmission with voice activity detection threshold.
+    VoiceActivity
+  | /// Manual hold-to-transmit via configurable key binding.
+    PushToTalk
 
-/// Voice state (mirrors server-side).
+/// Voice state — mirrors server-side voice_state for presence display.
 type voiceState =
-  | Active
-  | Muted
-  | Deafened
+  | /// Transmitting and receiving audio normally.
+    Active
+  | /// Microphone muted (still receiving audio from others).
+    Muted
+  | /// Fully deafened (not transmitting or receiving audio).
+    Deafened
 
-/// Audio device info.
+/// Audio device descriptor returned from enumerateDevices.
 type audioDevice = {
   deviceId: string,
   label: string,
   kind: string,
 }
 
-/// Voice engine configuration.
-type config = {
-  inputMode: inputMode,
-  pttKeyCode: string,
-  vadThreshold: float,
-  e2eeEnabled: bool,
-  privacyMode: string,
-  noiseSuppression: bool,
-  echoCancellation: bool,
-  autoGainControl: bool,
+/// Peer audio state — tracks a remote participant's audio playback.
+type peerAudio = {
+  /// The HTML Audio element used for playback.
+  mutable audioElement: {..},
+  /// Volume multiplier (0.0 to 2.0, default 1.0).
+  mutable volume: float,
+  /// The peer's user ID for presence correlation.
+  peerId: string,
 }
 
-/// Default configuration.
+/// Voice engine configuration — all tuneable parameters.
+type config = {
+  /// Whether to use VAD or PTT for input gating.
+  inputMode: inputMode,
+  /// The keyboard key code for PTT (default: "KeyV").
+  pttKeyCode: string,
+  /// RMS threshold below which VAD considers the user silent (0.0-1.0).
+  vadThreshold: float,
+  /// Whether to negotiate E2EE (Insertable Streams).
+  e2eeEnabled: bool,
+  /// ICE transport policy: "standard" or "turn_only" (privacy modes).
+  privacyMode: string,
+  /// Browser-level noise suppression on getUserMedia constraints.
+  noiseSuppression: bool,
+  /// Browser-level echo cancellation on getUserMedia constraints.
+  echoCancellation: bool,
+  /// Browser-level automatic gain control on getUserMedia constraints.
+  autoGainControl: bool,
+  /// Noise gate threshold for the client-side coprocessor (0.0-1.0).
+  noiseGateThreshold: float,
+  /// Whether the client-side coprocessor pipeline is enabled.
+  coprocessorEnabled: bool,
+}
+
+/// Default configuration — sensible out-of-the-box experience.
 let defaultConfig: config = {
   inputMode: VoiceActivity,
-  pttKeyCode: "Space",
+  pttKeyCode: "KeyV",
   vadThreshold: 0.02,
   e2eeEnabled: false,
   privacyMode: "turn_only",
   noiseSuppression: true,
   echoCancellation: true,
   autoGainControl: true,
+  noiseGateThreshold: 0.01,
+  coprocessorEnabled: true,
 }
 
-/// Voice engine state (mutable, managed internally).
+/// Voice engine state — the central mutable state object.
+/// Managed internally; external code interacts via accessor functions.
 type t = {
+  /// Current WebRTC connection lifecycle state.
   mutable state: connectionState,
+  /// Current mute/deafen state (synced to server via channel).
   mutable voiceState: voiceState,
+  /// Active configuration (may be updated at runtime).
   mutable config: config,
+  /// Whether the local user is currently speaking (above VAD threshold).
   mutable isSpeaking: bool,
+  /// Current RMS audio level (0.0 to 1.0).
   mutable audioLevel: float,
+  /// Whether PTT key is currently held down.
+  mutable pttKeyDown: bool,
   /// WebRTC PeerConnection (opaque browser object).
   mutable peerConnection: option<{..}>,
   /// Local MediaStream from getUserMedia.
   mutable localStream: option<{..}>,
-  /// AudioContext for level monitoring.
+  /// AudioContext for level monitoring and coprocessor pipeline.
   mutable audioContext: option<{..}>,
+  /// AnalyserNode for FFT-based audio level computation.
   mutable analyserNode: option<{..}>,
+  /// GainNode used by the coprocessor pipeline for noise gating.
+  mutable noiseGateNode: option<{..}>,
+  /// Interval ID for the audio level polling timer.
   mutable levelIntervalId: option<Nullable.t<float>>,
-  /// Per-peer volumes.
-  peerVolumes: Dict.t<string, float>,
-  /// Callbacks.
+  /// Phoenix channel for the current voice room (signaling transport).
+  mutable channel: option<PhoenixSocket.channel>,
+  /// Phoenix socket instance (connection to Burble backend).
+  mutable socket: option<PhoenixSocket.socket>,
+  /// Per-peer audio playback state (keyed by peerId).
+  peerAudios: dict<peerAudio>,
+  /// Per-peer volume overrides (keyed by peerId, 0.0 to 2.0).
+  peerVolumes: dict<float>,
+  /// Room ID currently connected to (for reconnection).
+  mutable roomId: option<string>,
+  /// Auth token for Phoenix socket params.
+  mutable authToken: option<string>,
+  /// Number of reconnection attempts (reset on successful connect).
+  mutable reconnectAttempts: int,
+  /// Maximum reconnection attempts before giving up.
+  mutable maxReconnectAttempts: int,
+  // ── Callbacks ──
+  /// Called when connectionState changes.
   mutable onStateChange: option<connectionState => unit>,
+  /// Called when isSpeaking transitions.
   mutable onSpeakingChange: option<bool => unit>,
+  /// Called every 50ms with the current RMS audio level.
   mutable onAudioLevel: option<float => unit>,
+  /// Called when a remote peer's speaking state changes.
   mutable onPeerSpeaking: option<(string, bool) => unit>,
-  /// Channel for signaling (set externally by App/PhoenixSocket).
-  mutable sendSdpAnswer: option<string => unit>,
-  mutable sendIceCandidate: option<string => unit>,
+  /// Called when a remote peer joins or leaves.
+  mutable onPeerChange: option<unit => unit>,
 }
 
 // ---------------------------------------------------------------------------
-// External bindings
+// External bindings — browser WebRTC and media APIs
 // ---------------------------------------------------------------------------
 
+/// Request microphone access via the MediaDevices API.
 @val external getUserMedia: {..} => promise<{..}> = "navigator.mediaDevices.getUserMedia"
+
+/// Construct a new RTCPeerConnection with the given configuration.
 @new external makeRTCPeerConnection: {..} => {..} = "RTCPeerConnection"
+
+/// Construct a new AudioContext for Web Audio processing.
 @new external makeAudioContext: unit => {..} = "AudioContext"
+
+/// Set a recurring timer. Returns an opaque interval ID.
+@val external setInterval: (unit => unit, int) => Nullable.t<float> = "setInterval"
+
+/// Cancel a recurring timer by its interval ID.
+@val external clearInterval: Nullable.t<float> => unit = "clearInterval"
+
+/// Set a one-shot timer. Returns an opaque timeout ID.
+@val external setTimeout: (unit => unit, int) => unit = "setTimeout"
+
+/// Register a keydown event listener on the window.
+@val @scope("window")
+external addKeyDownListener: (@as("keydown") _, {..} => unit) => unit = "addEventListener"
+
+/// Register a keyup event listener on the window.
+@val @scope("window")
+external addKeyUpListener: (@as("keyup") _, {..} => unit) => unit = "addEventListener"
+
+/// Remove a keydown event listener from the window.
+@val @scope("window")
+external removeKeyDownListener: (@as("keydown") _, {..} => unit) => unit = "removeEventListener"
+
+/// Remove a keyup event listener from the window.
+@val @scope("window")
+external removeKeyUpListener: (@as("keyup") _, {..} => unit) => unit = "removeEventListener"
 
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
 
+/// Create a new VoiceEngine instance with the given (or default) config.
+/// The engine starts in Disconnected state. Call `connect` to begin.
 let make = (~config: config=defaultConfig): t => {
   state: Disconnected,
   voiceState: Active,
   config,
   isSpeaking: false,
   audioLevel: 0.0,
+  pttKeyDown: false,
   peerConnection: None,
   localStream: None,
   audioContext: None,
   analyserNode: None,
+  noiseGateNode: None,
   levelIntervalId: None,
+  channel: None,
+  socket: None,
+  peerAudios: Dict.make(),
   peerVolumes: Dict.make(),
+  roomId: None,
+  authToken: None,
+  reconnectAttempts: 0,
+  maxReconnectAttempts: 5,
   onStateChange: None,
   onSpeakingChange: None,
   onAudioLevel: None,
   onPeerSpeaking: None,
-  sendSdpAnswer: None,
-  sendIceCandidate: None,
+  onPeerChange: None,
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers — state notifications
+// ---------------------------------------------------------------------------
+
+/// Notify the onStateChange callback (if registered) with the current state.
+let notifyState = (engine: t): unit => {
+  switch engine.onStateChange {
+  | Some(cb) => cb(engine.state)
+  | None => ()
+  }
+}
+
+/// Notify the onSpeakingChange callback (if registered).
+let notifySpeaking = (engine: t, speaking: bool): unit => {
+  switch engine.onSpeakingChange {
+  | Some(cb) => cb(speaking)
+  | None => ()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PTT key handling
+// ---------------------------------------------------------------------------
+
+/// Internal keydown handler for PTT mode. Captures the configured key
+/// and enables audio transmission while held.
+let handleKeyDown = (engine: t, event: {..}): unit => {
+  let code: string = event["code"]
+  if code == engine.config.pttKeyCode && !engine.pttKeyDown {
+    engine.pttKeyDown = true
+    // Enable local audio tracks when PTT key is pressed.
+    switch engine.localStream {
+    | Some(stream) =>
+      let tracks: array<{..}> = stream["getAudioTracks"]()
+      tracks->Array.forEach(track => {
+        track["enabled"] = engine.voiceState == Active
+      })
+    | None => ()
+    }
+  }
+}
+
+/// Internal keyup handler for PTT mode. Disables audio transmission
+/// when the configured key is released.
+let handleKeyUp = (engine: t, event: {..}): unit => {
+  let code: string = event["code"]
+  if code == engine.config.pttKeyCode && engine.pttKeyDown {
+    engine.pttKeyDown = false
+    // Disable local audio tracks when PTT key is released.
+    switch engine.localStream {
+    | Some(stream) =>
+      let tracks: array<{..}> = stream["getAudioTracks"]()
+      tracks->Array.forEach(track => {
+        track["enabled"] = false
+      })
+    | None => ()
+    }
+  }
+}
+
+/// Register PTT keyboard listeners on the window.
+let setupPttListeners = (engine: t): unit => {
+  addKeyDownListener(event => handleKeyDown(engine, event))
+  addKeyUpListener(event => handleKeyUp(engine, event))
+}
+
+// ---------------------------------------------------------------------------
+// Audio level monitoring — FFT-based RMS with VAD
+// ---------------------------------------------------------------------------
+
+/// Start polling the AnalyserNode for audio levels every 50ms.
+/// Computes RMS from frequency data, updates isSpeaking based on
+/// VAD threshold, and fires callbacks.
+let startAudioLevelMonitoring = (engine: t): unit => {
+  switch engine.localStream {
+  | Some(stream) =>
+    let ctx = makeAudioContext()
+    let source = ctx["createMediaStreamSource"](stream)
+    let analyser = ctx["createAnalyser"]()
+    analyser["fftSize"] = 256
+    source["connect"](analyser)
+
+    // If coprocessor is enabled, insert a GainNode for noise gating.
+    if engine.config.coprocessorEnabled {
+      let gainNode = ctx["createGain"]()
+      gainNode["gain"]["value"] = 1.0
+      source["connect"](gainNode)
+      gainNode["connect"](ctx["destination"])
+      engine.noiseGateNode = Some(gainNode)
+    }
+
+    engine.audioContext = Some(ctx)
+    engine.analyserNode = Some(analyser)
+
+    // Poll audio level every 50ms using a typed interval.
+    let intervalId = setInterval(() => {
+      // Read frequency data from the AnalyserNode.
+      let data: array<int> = %raw(`(() => {
+        const d = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(d);
+        return Array.from(d);
+      })()`)
+
+      // Compute RMS-like average normalised to 0.0-1.0.
+      let sum = data->Array.reduce(0, (acc, v) => acc + v)
+      let avg = Int.toFloat(sum) /. Int.toFloat(Array.length(data)) /. 255.0
+      engine.audioLevel = avg
+
+      // Apply noise gate via coprocessor GainNode:
+      // if audio is below the noise gate threshold, silence the gain.
+      switch engine.noiseGateNode {
+      | Some(gainNode) =>
+        if avg < engine.config.noiseGateThreshold {
+          gainNode["gain"]["value"] = 0.0
+        } else {
+          gainNode["gain"]["value"] = 1.0
+        }
+      | None => ()
+      }
+
+      // VAD: detect speaking transitions.
+      let wasSpeaking = engine.isSpeaking
+
+      // In PTT mode, speaking is gated by key hold state.
+      // In VAD mode, speaking is gated by the VAD threshold.
+      let nowSpeaking = switch engine.config.inputMode {
+      | PushToTalk => engine.pttKeyDown && avg > engine.config.vadThreshold
+      | VoiceActivity => avg > engine.config.vadThreshold
+      }
+
+      engine.isSpeaking = nowSpeaking
+
+      if nowSpeaking != wasSpeaking {
+        notifySpeaking(engine, nowSpeaking)
+        // Notify the server of speaking state via the channel.
+        switch engine.channel {
+        | Some(ch) =>
+          let stateStr = if nowSpeaking { "speaking" } else { "silent" }
+          PhoenixSocket.push(ch, "speaking_state", {"state": stateStr})
+        | None => ()
+        }
+      }
+
+      // Fire the continuous audio level callback.
+      switch engine.onAudioLevel {
+      | Some(cb) => cb(avg)
+      | None => ()
+      }
+    }, 50)
+
+    engine.levelIntervalId = Some(intervalId)
+  | None => ()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Peer audio management
+// ---------------------------------------------------------------------------
+
+/// Apply the configured volume to a peer's audio element.
+/// Clamps volume to 0.0-2.0 range.
+let applyPeerVolume = (engine: t, peerId: string): unit => {
+  switch Dict.get(engine.peerAudios, peerId) {
+  | Some(peer) =>
+    let vol = Dict.get(engine.peerVolumes, peerId)->Option.getOr(1.0)
+    let clamped = Math.max(0.0, Math.min(2.0, vol))
+    peer.audioElement["volume"] = clamped
+  | None => ()
+  }
+}
+
+/// Create an HTML audio element for a remote peer's stream and begin
+/// playback. Stores the element in peerAudios for volume control.
+let addPeerAudio = (engine: t, peerId: string, stream: {..}): unit => {
+  let audio: {..} = %raw(`(() => {
+    const a = new Audio();
+    a.autoplay = true;
+    return a;
+  })()`)
+  audio["srcObject"] = stream
+
+  let peer: peerAudio = {
+    audioElement: audio,
+    volume: 1.0,
+    peerId,
+  }
+  Dict.set(engine.peerAudios, peerId, peer)
+  applyPeerVolume(engine, peerId)
+
+  // If deafened, mute the audio element immediately.
+  if engine.voiceState == Deafened {
+    audio["muted"] = true
+  }
+}
+
+/// Remove a peer's audio element and stop playback.
+let removePeerAudio = (engine: t, peerId: string): unit => {
+  switch Dict.get(engine.peerAudios, peerId) {
+  | Some(peer) =>
+    peer.audioElement["pause"]()
+    peer.audioElement["srcObject"] = Nullable.null
+    Dict.delete(engine.peerAudios, peerId)
+  | None => ()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phoenix channel signaling
+// ---------------------------------------------------------------------------
+
+/// Set up event listeners on the Phoenix channel for WebRTC signaling.
+/// The server sends sdp_offer, ice_candidate, peer_joined, and peer_left.
+let setupChannelListeners = (engine: t, ch: PhoenixSocket.channel): unit => {
+  // ── SDP Offer from server ──
+  // The SFU sends an offer; we create an answer and send it back.
+  PhoenixSocket.on(ch, "sdp_offer", (payload: JSON.t) => {
+    let sdp: string = %raw(`payload.sdp`)
+    switch engine.peerConnection {
+    | Some(pc) =>
+      let _ = %raw(`(async () => {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: sdp}));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+        } catch (e) {
+          console.error('[Burble] Failed to handle SDP offer:', e);
+        }
+      })()`)
+
+      // After setLocalDescription, send the answer SDP back to the server.
+      // We use a short delay to ensure localDescription is set.
+      setTimeout(() => {
+        switch engine.peerConnection {
+        | Some(pc2) =>
+          let answerSdp: string = %raw(`pc2.localDescription ? pc2.localDescription.sdp : ""`)
+          if answerSdp != "" {
+            PhoenixSocket.push(ch, "sdp_answer", {"sdp": answerSdp})
+          }
+        | None => ()
+        }
+      }, 100)
+    | None =>
+      Console.error("[Burble] Received SDP offer but no PeerConnection exists")
+    }
+    ignore(payload)
+  })
+
+  // ── ICE Candidate from server ──
+  // The SFU sends ICE candidates for connectivity; we add them to the PC.
+  PhoenixSocket.on(ch, "ice_candidate", (payload: JSON.t) => {
+    let candidateJson: string = %raw(`JSON.stringify(payload)`)
+    switch engine.peerConnection {
+    | Some(pc) =>
+      let _ = %raw(`(async () => {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(JSON.parse(candidateJson)));
+        } catch (e) {
+          console.error('[Burble] Failed to add ICE candidate:', e);
+        }
+      })()`)
+      ignore(pc)
+    | None =>
+      Console.error("[Burble] Received ICE candidate but no PeerConnection exists")
+    }
+    ignore(payload)
+  })
+
+  // ── Peer joined ──
+  // The server notifies us when a new participant joins the room.
+  PhoenixSocket.on(ch, "peer_joined", (payload: JSON.t) => {
+    let peerId: string = %raw(`payload.peer_id || ""`)
+    Console.log2("[Burble] Peer joined:", peerId)
+    switch engine.onPeerChange {
+    | Some(cb) => cb()
+    | None => ()
+    }
+    ignore(payload)
+  })
+
+  // ── Peer left ──
+  // The server notifies us when a participant leaves; clean up audio.
+  PhoenixSocket.on(ch, "peer_left", (payload: JSON.t) => {
+    let peerId: string = %raw(`payload.peer_id || ""`)
+    Console.log2("[Burble] Peer left:", peerId)
+    removePeerAudio(engine, peerId)
+    switch engine.onPeerChange {
+    | Some(cb) => cb()
+    | None => ()
+    }
+    ignore(payload)
+  })
+
+  // ── Peer speaking state ──
+  // The server relays speaking indicators from other participants.
+  PhoenixSocket.on(ch, "peer_speaking", (payload: JSON.t) => {
+    let peerId: string = %raw(`payload.peer_id || ""`)
+    let speaking: bool = %raw(`!!payload.speaking`)
+    switch engine.onPeerSpeaking {
+    | Some(cb) => cb((peerId, speaking))
+    | None => ()
+    }
+    ignore(payload)
+  })
 }
 
 // ---------------------------------------------------------------------------
 // Connection lifecycle
 // ---------------------------------------------------------------------------
 
-/// Connect to the SFU. Call after joining the Phoenix channel.
-/// The channel should set `sendSdpAnswer` and `sendIceCandidate` before calling this.
-let connect = async (engine: t): result<unit, string> => {
+/// Connect to the Burble SFU for a specific room.
+///
+/// Flow:
+///   1. Connect Phoenix socket to ws://localhost:6473/voice
+///   2. Join the room:ROOM_ID channel
+///   3. getUserMedia for microphone access
+///   4. Create RTCPeerConnection with appropriate ICE config
+///   5. Add local audio tracks to the PeerConnection
+///   6. Set up ICE candidate, track, and connection state handlers
+///   7. Set up channel listeners for SDP/ICE exchange
+///   8. Start audio level monitoring and PTT listeners
+///   9. If PTT mode, mute tracks initially (unmute on key press)
+let connect = async (engine: t, ~roomId: string, ~token: string): result<unit, string> => {
   engine.state = Connecting
+  engine.roomId = Some(roomId)
+  engine.authToken = Some(token)
+  engine.reconnectAttempts = 0
   notifyState(engine)
 
-  // 1. Get microphone access.
+  // 1. Connect Phoenix socket to the Burble voice endpoint.
+  let wsUrl = "ws://localhost:6473/voice"
+  let sock = PhoenixSocket.connectToServer(~url=wsUrl, ~token)
+  engine.socket = Some(sock)
+
+  // 2. Join the room channel with user display name.
+  let ch = PhoenixSocket.joinRoom(sock, ~roomId, ~displayName="user")
+  engine.channel = Some(ch)
+
+  // 3. Get microphone access with audio processing constraints.
   let constraints = {
     "audio": {
       "autoGainControl": engine.config.autoGainControl,
@@ -150,61 +588,108 @@ let connect = async (engine: t): result<unit, string> => {
     let stream = await getUserMedia(constraints)
     engine.localStream = Some(stream)
 
-    // 2. Create PeerConnection with ICE config.
+    // 4. Create PeerConnection with ICE configuration.
+    // In privacy mode ("turn_only"), force relay-only ICE to prevent
+    // IP address leakage through STUN.
     let iceConfig = switch engine.config.privacyMode {
     | "standard" => {"iceServers": [{"urls": "stun:stun.l.google.com:19302"}]}
     | _ => {
         "iceServers": [{"urls": "stun:stun.l.google.com:19302"}],
-        "iceTransportPolicy": "relay", // TURN-only for privacy modes.
+        "iceTransportPolicy": "relay",
       }
     }
 
     let pc = makeRTCPeerConnection(iceConfig)
     engine.peerConnection = Some(pc)
 
-    // 3. Add local audio tracks to the PeerConnection.
+    // 5. Add local audio tracks to the PeerConnection.
+    // Each track is associated with the local stream for proper cleanup.
     let tracks: array<{..}> = stream["getAudioTracks"]()
     tracks->Array.forEach(track => {
       pc["addTrack"](track, stream)
     })
 
-    // 4. Handle ICE candidates — send to server.
+    // 6a. Handle outgoing ICE candidates — forward to server via channel.
     pc["onicecandidate"] = (event: {..}) => {
       let candidate = event["candidate"]
-      if !Nullable.isNullable(Nullable.make(candidate)) {
-        let json: string = %raw(`JSON.stringify(event.candidate.toJSON())`)
-        switch engine.sendIceCandidate {
-        | Some(send) => send(json)
+      let isNull: bool = %raw(`candidate === null`)
+      if !isNull {
+        let json: {..} = %raw(`event.candidate.toJSON()`)
+        switch engine.channel {
+        | Some(ch2) =>
+          PhoenixSocket.push(ch2, "ice_candidate", json)
         | None => ()
         }
       }
     }
 
-    // 5. Handle incoming tracks (audio from other peers).
+    // 6b. Handle incoming remote tracks (audio from other peers via SFU).
+    // Each track event creates an Audio element for playback.
     pc["ontrack"] = (event: {..}) => {
       let remoteStreams: array<{..}> = event["streams"]
-      // Create audio element for playback.
       if Array.length(remoteStreams) > 0 {
-        let audio: {..} = %raw(`new Audio()`)
-        audio["srcObject"] = remoteStreams[0]
-        audio["autoplay"] = true
+        // Extract peer ID from the track's stream ID (SFU convention).
+        let streamId: string = remoteStreams[0]["id"]
+        let peerId = streamId
+        addPeerAudio(engine, peerId, remoteStreams[0])
       }
     }
 
-    // 6. Handle connection state changes.
+    // 6c. Handle PeerConnection state changes for lifecycle management.
     pc["onconnectionstatechange"] = (_: {..}) => {
       let pcState: string = pc["connectionState"]
       switch pcState {
       | "connected" =>
         engine.state = Connected
+        engine.reconnectAttempts = 0
         notifyState(engine)
-        startAudioLevelMonitoring(engine)
-      | "disconnected" | "failed" =>
-        engine.state = Failed(pcState)
+        Console.log("[Burble] Voice connected")
+      | "disconnected" =>
+        // Attempt reconnection before declaring failure.
+        engine.state = Reconnecting
+        notifyState(engine)
+        Console.log("[Burble] Voice disconnected, attempting reconnect...")
+        attemptReconnect(engine)
+      | "failed" =>
+        engine.state = Failed("PeerConnection failed")
+        notifyState(engine)
+        Console.error("[Burble] Voice connection failed")
+      | "closed" =>
+        engine.state = Disconnected
         notifyState(engine)
       | _ => ()
       }
     }
+
+    // 6d. Handle ICE connection state for more granular connectivity info.
+    pc["oniceconnectionstatechange"] = (_: {..}) => {
+      let iceState: string = pc["iceConnectionState"]
+      Console.log2("[Burble] ICE state:", iceState)
+    }
+
+    // 7. Set up Phoenix channel listeners for signaling.
+    setupChannelListeners(engine, ch)
+
+    // 8. Start audio level monitoring (VAD, speaking indicators).
+    startAudioLevelMonitoring(engine)
+
+    // 9. Set up PTT keyboard listeners.
+    setupPttListeners(engine)
+
+    // 10. If PTT mode, start with tracks disabled (unmute on key press).
+    if engine.config.inputMode == PushToTalk {
+      tracks->Array.forEach(track => {
+        track["enabled"] = false
+      })
+    }
+
+    // 11. Send voice state to server so presence shows correctly.
+    let stateStr = switch engine.voiceState {
+    | Active => "active"
+    | Muted => "muted"
+    | Deafened => "deafened"
+    }
+    PhoenixSocket.sendVoiceState(ch, ~state=stateStr)
 
     Ok()
   } catch {
@@ -212,11 +697,38 @@ let connect = async (engine: t): result<unit, string> => {
     let msg = exn->Exn.message->Option.getOr("WebRTC connection failed")
     engine.state = Failed(msg)
     notifyState(engine)
+    Console.error2("[Burble] Voice connect error:", msg)
     Error(msg)
   }
 }
 
-/// Handle an SDP offer from the server.
+/// Attempt to reconnect after a disconnection. Uses exponential backoff
+/// up to maxReconnectAttempts before declaring failure.
+and attemptReconnect = (engine: t): unit => {
+  if engine.reconnectAttempts < engine.maxReconnectAttempts {
+    engine.reconnectAttempts = engine.reconnectAttempts + 1
+    let delayMs = %raw(`Math.min(1000 * Math.pow(2, engine.reconnectAttempts), 30000)`)
+    Console.log2(
+      "[Burble] Reconnect attempt",
+      `${Int.toString(engine.reconnectAttempts)}/${Int.toString(engine.maxReconnectAttempts)} in ${Int.toString(delayMs)}ms`,
+    )
+    setTimeout(() => {
+      switch (engine.roomId, engine.authToken) {
+      | (Some(roomId), Some(token)) =>
+        let _ = connect(engine, ~roomId, ~token)
+      | _ =>
+        engine.state = Failed("Cannot reconnect: missing room or token")
+        notifyState(engine)
+      }
+    }, delayMs)
+  } else {
+    engine.state = Failed("Max reconnection attempts exceeded")
+    notifyState(engine)
+    Console.error("[Burble] Max reconnect attempts reached")
+  }
+}
+
+/// Handle an SDP offer from the server (direct call, alternative to channel).
 /// Called by the Phoenix channel when it receives "sdp_offer".
 let handleSdpOffer = async (engine: t, sdp: string): unit => {
   switch engine.peerConnection {
@@ -226,23 +738,25 @@ let handleSdpOffer = async (engine: t, sdp: string): unit => {
         await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: sdp}));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        return answer.sdp;
       })()`)
 
       let answerSdp: string = pc["localDescription"]["sdp"]
 
-      switch engine.sendSdpAnswer {
-      | Some(send) => send(answerSdp)
+      switch engine.channel {
+      | Some(ch) =>
+        PhoenixSocket.push(ch, "sdp_answer", {"sdp": answerSdp})
       | None => ()
       }
     } catch {
-    | _exn => ()
+    | _exn =>
+      Console.error("[Burble] Failed to handle SDP offer")
     }
-  | None => ()
+  | None =>
+    Console.error("[Burble] No PeerConnection for SDP offer")
   }
 }
 
-/// Handle an ICE candidate from the server.
+/// Handle an ICE candidate from the server (direct call, alternative to channel).
 /// Called by the Phoenix channel when it receives "ice_candidate".
 let handleIceCandidate = async (engine: t, candidateJson: string): unit => {
   switch engine.peerConnection {
@@ -251,21 +765,24 @@ let handleIceCandidate = async (engine: t, candidateJson: string): unit => {
       let _: unit = await %raw(`pc.addIceCandidate(new RTCIceCandidate(JSON.parse(candidateJson)))`)
       ignore(pc)
     } catch {
-    | _exn => ()
+    | _exn =>
+      Console.error("[Burble] Failed to add ICE candidate")
     }
-  | None => ()
+  | None =>
+    Console.error("[Burble] No PeerConnection for ICE candidate")
   }
 }
 
-/// Disconnect from voice.
+/// Disconnect from voice — clean up all WebRTC, audio, and channel state.
+/// Idempotent: safe to call multiple times or when already disconnected.
 let disconnect = (engine: t): unit => {
-  // Stop audio level monitoring.
+  // Stop audio level monitoring timer.
   switch engine.levelIntervalId {
-  | Some(id) => %raw(`clearInterval(id)`)
+  | Some(id) => clearInterval(id)
   | None => ()
   }
 
-  // Stop local media tracks.
+  // Stop all local media tracks (releases microphone).
   switch engine.localStream {
   | Some(stream) =>
     let tracks: array<{..}> = stream["getTracks"]()
@@ -273,32 +790,59 @@ let disconnect = (engine: t): unit => {
   | None => ()
   }
 
-  // Close PeerConnection.
+  // Close PeerConnection (terminates ICE, DTLS, and media).
   switch engine.peerConnection {
   | Some(pc) => pc["close"]()
   | None => ()
   }
 
-  // Close AudioContext.
+  // Close AudioContext (releases audio processing resources).
   switch engine.audioContext {
   | Some(ctx) => ctx["close"]()
   | None => ()
   }
 
+  // Leave the Phoenix channel and disconnect socket.
+  switch engine.channel {
+  | Some(ch) => PhoenixSocket.leave(ch)
+  | None => ()
+  }
+  switch engine.socket {
+  | Some(sock) => PhoenixSocket.disconnect(sock)
+  | None => ()
+  }
+
+  // Clean up all peer audio elements.
+  let peerIds = Dict.keysToArray(engine.peerAudios)
+  peerIds->Array.forEach(peerId => removePeerAudio(engine, peerId))
+
+  // Reset all mutable state to initial values.
   engine.peerConnection = None
   engine.localStream = None
   engine.audioContext = None
   engine.analyserNode = None
+  engine.noiseGateNode = None
   engine.levelIntervalId = None
+  engine.channel = None
+  engine.socket = None
   engine.state = Disconnected
   engine.isSpeaking = false
+  engine.pttKeyDown = false
+  engine.audioLevel = 0.0
+  engine.roomId = None
+  engine.authToken = None
+  engine.reconnectAttempts = 0
   notifyState(engine)
+  Console.log("[Burble] Voice disconnected")
 }
 
 // ---------------------------------------------------------------------------
-// Voice controls
+// Voice controls — mute, deafen, input mode, peer volume
 // ---------------------------------------------------------------------------
 
+/// Toggle mute state. Cycles: Active -> Muted -> Active.
+/// Deafened state is also cleared by toggling mute (returns to Active).
+/// Syncs the new state to the server via the Phoenix channel.
 let toggleMute = (engine: t): voiceState => {
   engine.voiceState = switch engine.voiceState {
   | Active => Muted
@@ -306,7 +850,7 @@ let toggleMute = (engine: t): voiceState => {
   | Deafened => Active
   }
 
-  // Mute/unmute local audio tracks.
+  // Mute/unmute local audio tracks to match voice state.
   switch engine.localStream {
   | Some(stream) =>
     let tracks: array<{..}> = stream["getAudioTracks"]()
@@ -315,26 +859,126 @@ let toggleMute = (engine: t): voiceState => {
   | None => ()
   }
 
+  // If undeafening, unmute all peer audio elements.
+  if engine.voiceState == Active {
+    let peerIds = Dict.keysToArray(engine.peerAudios)
+    peerIds->Array.forEach(peerId => {
+      switch Dict.get(engine.peerAudios, peerId) {
+      | Some(peer) => peer.audioElement["muted"] = false
+      | None => ()
+      }
+    })
+  }
+
+  // Sync voice state to server.
+  switch engine.channel {
+  | Some(ch) =>
+    let stateStr = switch engine.voiceState {
+    | Active => "active"
+    | Muted => "muted"
+    | Deafened => "deafened"
+    }
+    PhoenixSocket.sendVoiceState(ch, ~state=stateStr)
+  | None => ()
+  }
+
   engine.voiceState
 }
 
+/// Toggle deafen state. When deafened, both local and remote audio are silenced.
+/// Cycling deafen: Active/Muted -> Deafened -> Active.
+/// Syncs the new state to the server via the Phoenix channel.
 let toggleDeafen = (engine: t): voiceState => {
   engine.voiceState = switch engine.voiceState {
   | Deafened => Active
   | _ => Deafened
   }
+
+  // When deafened, mute local tracks AND all peer audio elements.
+  let isDeafened = engine.voiceState == Deafened
+
+  // Mute/unmute local tracks.
+  switch engine.localStream {
+  | Some(stream) =>
+    let tracks: array<{..}> = stream["getAudioTracks"]()
+    tracks->Array.forEach(track => {
+      track["enabled"] = !isDeafened
+    })
+  | None => ()
+  }
+
+  // Mute/unmute all peer audio elements.
+  let peerIds = Dict.keysToArray(engine.peerAudios)
+  peerIds->Array.forEach(peerId => {
+    switch Dict.get(engine.peerAudios, peerId) {
+    | Some(peer) => peer.audioElement["muted"] = isDeafened
+    | None => ()
+    }
+  })
+
+  // Sync voice state to server.
+  switch engine.channel {
+  | Some(ch) =>
+    let stateStr = switch engine.voiceState {
+    | Active => "active"
+    | Muted => "muted"
+    | Deafened => "deafened"
+    }
+    PhoenixSocket.sendVoiceState(ch, ~state=stateStr)
+  | None => ()
+  }
+
   engine.voiceState
 }
 
+/// Switch between VAD and PTT input modes at runtime.
+/// When switching to PTT, local tracks are muted until the key is pressed.
+/// When switching to VAD, local tracks are re-enabled (if not muted/deafened).
 let setInputMode = (engine: t, mode: inputMode): unit => {
   engine.config = {...engine.config, inputMode: mode}
+
+  switch mode {
+  | PushToTalk =>
+    // In PTT mode, start with tracks disabled.
+    switch engine.localStream {
+    | Some(stream) =>
+      let tracks: array<{..}> = stream["getAudioTracks"]()
+      tracks->Array.forEach(track => {
+        track["enabled"] = false
+      })
+    | None => ()
+    }
+  | VoiceActivity =>
+    // In VAD mode, re-enable tracks (unless muted/deafened).
+    switch engine.localStream {
+    | Some(stream) =>
+      let tracks: array<{..}> = stream["getAudioTracks"]()
+      let enabled = engine.voiceState == Active
+      tracks->Array.forEach(track => {
+        track["enabled"] = enabled
+      })
+    | None => ()
+    }
+  }
 }
 
+/// Set the volume for a specific peer (0.0 to 2.0).
+/// 1.0 is normal volume; values above 1.0 amplify.
+/// Applied immediately to the peer's audio element.
 let setPeerVolume = (engine: t, ~peerId: string, ~volume: float): unit => {
   let clamped = Math.max(0.0, Math.min(2.0, volume))
   engine.peerVolumes->Dict.set(peerId, clamped)
+  applyPeerVolume(engine, peerId)
 }
 
+/// Set the PTT key binding at runtime (uses KeyboardEvent.code values).
+/// Common values: "KeyV" (default), "Space", "KeyT", "KeyZ".
+let setPttKeyCode = (engine: t, code: string): unit => {
+  engine.config = {...engine.config, pttKeyCode: code}
+}
+
+/// Enumerate available audio input and output devices.
+/// Requires getUserMedia to have been called at least once for labels.
 let getAudioDevices = async (): array<audioDevice> => {
   try {
     let devices: array<{..}> = await %raw(`navigator.mediaDevices.enumerateDevices()`)
@@ -352,56 +996,59 @@ let getAudioDevices = async (): array<audioDevice> => {
 }
 
 // ---------------------------------------------------------------------------
-// Getters
+// Getters — read-only access to engine state
 // ---------------------------------------------------------------------------
 
+/// Get the current connection state.
 let getState = (engine: t): connectionState => engine.state
+
+/// Get the current voice state (active/muted/deafened).
 let getVoiceState = (engine: t): voiceState => engine.voiceState
+
+/// Whether the local user is currently speaking.
 let isSpeaking = (engine: t): bool => engine.isSpeaking
+
+/// The current RMS audio level (0.0 to 1.0).
 let getAudioLevel = (engine: t): float => engine.audioLevel
 
+/// The current input mode (VAD or PTT).
+let getInputMode = (engine: t): inputMode => engine.config.inputMode
+
+/// Whether the PTT key is currently held down.
+let isPttActive = (engine: t): bool => engine.pttKeyDown
+
+/// Get the current PTT key code.
+let getPttKeyCode = (engine: t): string => engine.config.pttKeyCode
+
+/// Get the volume for a specific peer (default 1.0).
+let getPeerVolume = (engine: t, peerId: string): float =>
+  Dict.get(engine.peerVolumes, peerId)->Option.getOr(1.0)
+
 // ---------------------------------------------------------------------------
-// Private
+// Callback registration — used by the UI layer
 // ---------------------------------------------------------------------------
 
-let notifyState = (engine: t): unit => {
-  switch engine.onStateChange {
-  | Some(cb) => cb(engine.state)
-  | None => ()
-  }
+/// Register a callback for connection state changes.
+let onStateChange = (engine: t, cb: connectionState => unit): unit => {
+  engine.onStateChange = Some(cb)
 }
 
-let startAudioLevelMonitoring = (engine: t): unit => {
-  switch engine.localStream {
-  | Some(stream) =>
-    let ctx = makeAudioContext()
-    let source = ctx["createMediaStreamSource"](stream)
-    let analyser = ctx["createAnalyser"]()
-    analyser["fftSize"] = 256
-    source["connect"](analyser)
+/// Register a callback for speaking state transitions.
+let onSpeakingChange = (engine: t, cb: bool => unit): unit => {
+  engine.onSpeakingChange = Some(cb)
+}
 
-    engine.audioContext = Some(ctx)
-    engine.analyserNode = Some(analyser)
+/// Register a callback for continuous audio level updates.
+let onAudioLevel = (engine: t, cb: float => unit): unit => {
+  engine.onAudioLevel = Some(cb)
+}
 
-    // Poll audio level every 50ms.
-    let intervalId = %raw(`setInterval(() => {
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      analyser.getByteFrequencyData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) sum += data[i];
-      const avg = sum / data.length / 255.0;
-      engine.audioLevel = avg;
-      const wasSpeaking = engine.isSpeaking;
-      engine.isSpeaking = avg > engine.config.vadThreshold;
-      if (engine.isSpeaking !== wasSpeaking && engine.onSpeakingChange) {
-        engine.onSpeakingChange(engine.isSpeaking);
-      }
-      if (engine.onAudioLevel) {
-        engine.onAudioLevel(avg);
-      }
-    }, 50)`)
+/// Register a callback for peer speaking state changes.
+let onPeerSpeaking = (engine: t, cb: (string, bool) => unit): unit => {
+  engine.onPeerSpeaking = Some(cb)
+}
 
-    engine.levelIntervalId = Some(intervalId)
-  | None => ()
-  }
+/// Register a callback for peer join/leave events.
+let onPeerChange = (engine: t, cb: unit => unit): unit => {
+  engine.onPeerChange = Some(cb)
 }

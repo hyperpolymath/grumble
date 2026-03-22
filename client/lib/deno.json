@@ -1,6 +1,8 @@
 {
   "name": "@burble/client",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
+  "license": "MPL-2.0",
+  "description": "Embeddable voice chat client SDK — WebRTC voice, spatial audio, push-to-talk, signaling. Framework-agnostic ReScript library for adding real-time voice to any application. Includes game (IDApTIK) and workspace (PanLL) integration extensions.",
   "exports": {
     ".": "./src/BurbleClient.res.mjs",
     "./voice": "./src/BurbleVoice.res.mjs",
@@ -12,5 +14,12 @@
   },
   "publish": {
     "include": ["src/**/*.res.mjs", "src/**/*.res", "deno.json", "rescript.json", "LICENSE", "README.md"]
+  },
+  "imports": {
+    "@rescript/core": "npm:@rescript/core@1.6.1",
+    "@rescript/core/": "npm:/@rescript/core@1.6.1/",
+    "@rescript/runtime/": "npm:/@rescript/runtime@12.2.0/",
+    "rescript": "npm:rescript@12.2.0",
+    "phoenix": "npm:phoenix@1.7.14"
   }
 }

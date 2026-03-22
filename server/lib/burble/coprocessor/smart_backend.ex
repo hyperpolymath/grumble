@@ -86,6 +86,33 @@ defmodule Burble.Coprocessor.SmartBackend do
     zig_or_elixir().audio_echo_cancel(capture, reference, filter_length)
   end
 
+  # Signal science additions — all Elixir for now, Zig candidates for Phase 2.
+  # AGC and perceptual weighting are DSP-heavy and would benefit from SIMD.
+
+  @impl true
+  def audio_agc(pcm, target_rms_db, attack_ms, release_ms, state) do
+    # AGC is a good Zig candidate (per-sample gain with soft clipping).
+    always_elixir().audio_agc(pcm, target_rms_db, attack_ms, release_ms, state)
+  end
+
+  @impl true
+  def audio_comfort_noise(frame_length, level_db, noise_profile) do
+    # Comfort noise is lightweight — Elixir is fine.
+    always_elixir().audio_comfort_noise(frame_length, level_db, noise_profile)
+  end
+
+  @impl true
+  def audio_spectral_vad(pcm, sample_rate, state) do
+    # Spectral VAD uses FFT — route to Zig when FFT-based VAD NIF is added.
+    always_elixir().audio_spectral_vad(pcm, sample_rate, state)
+  end
+
+  @impl true
+  def audio_perceptual_weight(magnitudes, sample_rate) do
+    # Perceptual weighting is pure math on magnitude array — good Zig candidate.
+    always_elixir().audio_perceptual_weight(magnitudes, sample_rate)
+  end
+
   # ---------------------------------------------------------------------------
   # Crypto kernel — dispatch (Erlang :crypto is already native C)
   # ---------------------------------------------------------------------------

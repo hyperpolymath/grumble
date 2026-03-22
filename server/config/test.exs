@@ -16,3 +16,7 @@ config :burble, BurbleWeb.Endpoint,
 config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime
 config :bcrypt_elixir, :log_rounds, 1
+
+# Swoosh: disable real email in test
+config :swoosh, :api_client, false
+config :burble, Burble.Mailer, adapter: Swoosh.Adapters.Test

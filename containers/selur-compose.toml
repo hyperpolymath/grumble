@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# Burble — Selur/Podman Compose deployment configuration.
+#
+# Services:
+#   burble-server  — Elixir OTP control plane + Zig coprocessor NIFs
+#   burble-web     — ReScript SPA served by nginx (exposed on port 6473)
+#   verisimdb      — VeriSimDB persistent store (internal only)
+#
+# Usage:
+#   podman-compose -f containers/selur-compose.toml up -d
+#   (or, when selur-compose is ready: selur-compose up)
+#
+# Required secrets (set via environment or .env file):
+#   SECRET_KEY_BASE   — Phoenix secret key
+#   GUARDIAN_SECRET    — JWT signing key (defaults to SECRET_KEY_BASE)
+#
+# Optional SMTP (for magic link emails):
+#   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+
+[project]
+name = "burble"
+
+# =============================================================================
+# VeriSimDB — Persistent store (internal network only, not exposed)
+# =============================================================================
+[services.verisimdb]
+build = { context = "../../nextgen-databases/verisimdb", dockerfile = "Containerfile" }
+restart = "unless-stopped"
+networks = ["burble-internal"]
+healthcheck = { test = "wget -q --spider http://localhost:8080/health || exit 1", interval = "30s", timeout = "5s", retries = 3 }
+# VeriSimDB data volume — persistent across restarts.
+volumes = ["verisimdb-data:/data"]
+
+# =============================================================================
+# Burble Server — Elixir OTP release with coprocessor NIFs
+# =============================================================================
+[services.server]
+build = { context = "..", dockerfile = "containers/Containerfile.server" }
+depends_on = { verisimdb = { condition = "service_healthy" } }
+restart = "unless-stopped"
+networks = ["burble-internal"]
+environment = [
+  "PHX_SERVER=true",
+  "PORT=6473",
+  "PHX_HOST=localhost",
+  "VERISIMDB_URL=http://verisimdb:8080",
+  "BURBLE_TOPOLOGY=monarchic",
+  # Proven NIF shared objects directory.
+  "PROVEN_LIB_DIR=/app/lib/burble-0.1.0/priv",
+]
+# Secrets — inject at deploy time via environment or .env file:
+#   SECRET_KEY_BASE=<mix phx.gen.secret>
+#   GUARDIAN_SECRET=<mix phx.gen.secret>
+#   SMTP_HOST=smtp.example.com
+#   SMTP_PORT=587
+#   SMTP_USER=noreply@example.com
+#   SMTP_PASS=<smtp password>
+healthcheck = { test = "wget -q --spider http://localhost:6473/api/v1/auth/guest || exit 1", interval = "30s", timeout = "5s", retries = 3 }
+
+# =============================================================================
+# Burble Web — ReScript SPA via nginx (publicly exposed on port 6473)
+# =============================================================================
+[services.web]
+build = { context = "..", dockerfile = "containers/Containerfile.web" }
+depends_on = ["server"]
+restart = "unless-stopped"
+ports = ["6473:80"]
+networks = ["burble-internal"]
+
+# =============================================================================
+# Networks
+# =============================================================================
+[networks.burble-internal]
+driver = "bridge"
+# Internal network — only burble-web is exposed to the host via port mapping.
+
+# =============================================================================
+# Volumes
+# =============================================================================
+[volumes.verisimdb-data]
+driver = "local"
+
+# =============================================================================
+# Svalinn policy enforcement (future — when Stapeln stack is ready)
+# =============================================================================
+# [x-svalinn]
+# policy = "containers/policy.yaml"
+# require-signed-images = true
+# require-sbom = true

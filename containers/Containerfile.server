@@ -1,60 +1,118 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
-# Burble Server — Elixir OTP release with Zig coprocessor NIFs.
+# Burble Server — Multi-stage Elixir OTP release with Zig coprocessor NIFs.
+#
+# Multi-stage build:
+#   Stage 1 (build): Install Elixir + Zig, compile deps, build NIFs, produce OTP release.
+#   Stage 2 (runtime): Minimal wolfi-base with Erlang runtime only.
 #
 # Build:  podman build -t burble-server:latest -f containers/Containerfile.server .
-# Run:    podman run --rm -p 4000:4000 -e SECRET_KEY_BASE=... -e VERISIMDB_URL=... burble-server:latest
+# Run:    podman run --rm -p 6473:6473 -e SECRET_KEY_BASE=... -e VERISIMDB_URL=... burble-server:latest
 # Seal:   selur seal burble-server:latest
+#
+# Environment variables (required in prod):
+#   SECRET_KEY_BASE   — Phoenix secret (generate with: mix phx.gen.secret)
+#   VERISIMDB_URL     — VeriSimDB endpoint (e.g. http://verisimdb:8080)
+#   PORT              — Listen port (default: 6473)
+#   PHX_HOST          — Public hostname
+#   PHX_SERVER        — Must be "true" to start the HTTP server
+#
+# Environment variables (optional):
+#   GUARDIAN_SECRET    — JWT secret (defaults to SECRET_KEY_BASE)
+#   VERISIMDB_API_KEY — VeriSimDB auth key
+#   BURBLE_TOPOLOGY   — monarchic | oligarchic | distributed | serverless
+#   SMTP_HOST         — SMTP server for magic link emails
+#   SMTP_PORT         — SMTP port (default: 587)
+#   SMTP_USER         — SMTP username
+#   SMTP_PASS         — SMTP password
+#   PROVEN_LIB_DIR    — Path to proven NIF shared objects
 
-# --- Build stage: Elixir + Zig ---
+# =============================================================================
+# Stage 1: Build — Elixir deps, Zig NIFs, OTP release
+# =============================================================================
 FROM cgr.dev/chainguard/wolfi-base:latest AS build
 
-RUN apk add --no-cache elixir erlang-dev zig gcc musl-dev make
+# Install build toolchain: Elixir, Erlang headers, Zig, C compiler.
+RUN apk add --no-cache \
+    elixir \
+    erlang-dev \
+    zig \
+    gcc \
+    musl-dev \
+    make \
+    git
 
 WORKDIR /build
 
-# Elixir deps first (cache layer).
+# --- Elixir dependency layer (cached unless mix.exs/mix.lock change) ---
 COPY server/mix.exs server/mix.lock ./server/
 WORKDIR /build/server
-RUN mix local.hex --force && mix local.rebar --force
-RUN MIX_ENV=prod mix deps.get --only prod
-RUN MIX_ENV=prod mix deps.compile
 
-# Zig NIFs.
+RUN mix local.hex --force && mix local.rebar --force
+
+# Fetch and compile production deps only.
+ENV MIX_ENV=prod
+RUN mix deps.get --only prod
+RUN mix deps.compile
+
+# --- Zig NIF layer (cached unless ffi/zig/ changes) ---
 WORKDIR /build
 COPY ffi/zig/ ./ffi/zig/
 WORKDIR /build/ffi/zig
 RUN zig build -Doptimize=ReleaseFast
-RUN cp zig-out/lib/libburble_coprocessor.so /build/server/priv/burble_coprocessor.so
 
-# Elixir app.
+# Copy compiled NIF into the server priv/ directory so the release includes it.
+RUN mkdir -p /build/server/priv && \
+    cp zig-out/lib/libburble_coprocessor.so /build/server/priv/burble_coprocessor.so
+
+# --- Elixir application layer ---
 WORKDIR /build/server
 COPY server/lib/ ./lib/
 COPY server/config/ ./config/
 COPY server/priv/ ./priv/
+COPY server/rel/ ./rel/ 2>/dev/null || true
+
+# Compile the application.
 RUN MIX_ENV=prod mix compile
+
+# Build the OTP release.
 RUN MIX_ENV=prod mix release
 
-# --- Runtime stage ---
+# =============================================================================
+# Stage 2: Runtime — Minimal Erlang + OTP release
+# =============================================================================
 FROM cgr.dev/chainguard/wolfi-base:latest AS runtime
 
-RUN apk add --no-cache erlang ncurses-libs libstdc++
+# Install only the Erlang runtime (no compiler, no dev headers).
+RUN apk add --no-cache \
+    erlang \
+    ncurses-libs \
+    libstdc++
 
-# Non-root user.
+# Non-root user for security.
 RUN adduser -D -u 1000 burble
 USER burble
 
+# Copy the OTP release from the build stage.
 COPY --from=build --chown=burble:burble /build/server/_build/prod/rel/burble /app/
 
 WORKDIR /app
 
+# Proven NIF directory — mount or bake in at deploy time.
+ENV PROVEN_LIB_DIR=/app/lib/burble-0.1.0/priv
+
+# Default environment.
 ENV PHX_SERVER=true
-ENV PORT=4000
-EXPOSE 4000
+ENV PORT=6473
 
+# Burble listens on port 6473 (voice platform default).
+EXPOSE 6473
+
+# Health check: hit the guest auth endpoint as a smoke test.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -q --spider http://localhost:4000/api/v1/auth/guest || exit 1
+  CMD wget -q --spider http://localhost:6473/api/v1/auth/guest || exit 1
 
+# OTP release entry point.
 ENTRYPOINT ["/app/bin/burble"]
 CMD ["start"]

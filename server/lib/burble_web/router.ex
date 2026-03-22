@@ -40,6 +40,14 @@ defmodule BurbleWeb.Router do
 
     # Invite acceptance (public — uses invite token, not auth token)
     post "/invites/:token/accept", InviteController, :accept
+
+    # Diagnostics (public — self-test before joining voice)
+    get "/diagnostics/self-test", DiagnosticsController, :self_test
+    get "/diagnostics/self-test/:mode", DiagnosticsController, :self_test
+
+    # Instant connect — join via link/QR/code (public, no auth required)
+    get "/join/:code", InstantConnectController, :lookup
+    post "/join/:code", InstantConnectController, :redeem
   end
 
   # Authenticated API routes (require valid JWT).
@@ -58,6 +66,24 @@ defmodule BurbleWeb.Router do
     post "/servers/:server_id/rooms", RoomController, :create
     get "/rooms/:id", RoomController, :show
     get "/rooms/:id/participants", RoomController, :participants
+
+    # Voice routing (broadcast all / group / private / priority)
+    put "/rooms/:id/routing/mode", RoutingController, :set_mode
+    get "/rooms/:id/routing/mode", RoutingController, :get_mode
+    post "/rooms/:id/routing/groups", RoutingController, :create_group
+    get "/rooms/:id/routing/groups", RoutingController, :list_groups
+    post "/rooms/:id/routing/groups/:group_id/join", RoutingController, :join_group
+    delete "/rooms/:id/routing/groups/leave", RoutingController, :leave_group
+
+    # Text messages
+    get "/rooms/:id/messages", MessageController, :index
+    post "/rooms/:id/messages", MessageController, :create
+
+    # Moderation
+    post "/rooms/:id/kick", ModerationController, :kick
+    post "/rooms/:id/mute", ModerationController, :mute
+    post "/rooms/:id/move", ModerationController, :move
+    post "/servers/:id/ban", ModerationController, :ban
 
     # Invites (creation requires auth)
     post "/servers/:server_id/invites", InviteController, :create

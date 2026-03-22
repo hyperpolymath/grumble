@@ -123,6 +123,210 @@ defmodule Burble.Coprocessor.ElixirBackend do
   end
 
   # ---------------------------------------------------------------------------
+  # Signal science additions — AGC, comfort noise, spectral VAD, perceptual weighting
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def audio_agc(pcm, target_rms_db, attack_ms, release_ms, state) do
+    # Automatic gain control using RMS-based envelope tracking.
+    # Computes frame RMS, compares to target, smooths gain change
+    # using asymmetric attack/release time constants.
+    target_rms = :math.pow(10.0, target_rms_db / 20.0)
+    current_gain = Map.get(state, :gain, 1.0)
+
+    # Compute frame RMS.
+    sum_sq = Enum.reduce(pcm, 0.0, fn s, acc -> acc + s * s end)
+    frame_len = max(length(pcm), 1)
+    rms = :math.sqrt(sum_sq / frame_len)
+
+    # Desired gain to reach target RMS.
+    desired_gain =
+      if rms > 1.0e-8 do
+        min(target_rms / rms, 10.0)  # Cap at 20 dB boost
+      else
+        current_gain
+      end
+
+    # Smooth gain using attack/release time constants.
+    # Attack (gain decreasing) is faster than release (gain increasing).
+    alpha =
+      if desired_gain < current_gain do
+        # Attacking — gain needs to drop (loud signal).
+        1.0 - :math.exp(-1.0 / max(attack_ms * 0.048, 0.001))
+      else
+        # Releasing — gain can rise (quiet signal).
+        1.0 - :math.exp(-1.0 / max(release_ms * 0.048, 0.001))
+      end
+
+    new_gain = current_gain + alpha * (desired_gain - current_gain)
+
+    # Apply gain with soft clipping to prevent distortion.
+    normalised =
+      Enum.map(pcm, fn sample ->
+        amplified = sample * new_gain
+        # Soft clip using tanh for natural limiting.
+        if abs(amplified) > 0.9 do
+          0.9 * :math.tanh(amplified / 0.9)
+        else
+          amplified
+        end
+      end)
+
+    {normalised, Map.put(state, :gain, new_gain)}
+  end
+
+  @impl true
+  def audio_comfort_noise(frame_length, level_db, noise_profile) do
+    # Generate spectrally-shaped comfort noise.
+    # 1. Generate white noise
+    # 2. Shape it using the noise profile (spectral envelope from recent silence)
+    # 3. Scale to the target level
+    level_linear = :math.pow(10.0, level_db / 20.0)
+
+    # Generate white noise samples.
+    white_noise =
+      for _ <- 1..frame_length do
+        (:rand.uniform() * 2.0 - 1.0)
+      end
+
+    # If we have a noise profile, shape the noise spectrally.
+    # Otherwise just return scaled white noise.
+    shaped =
+      if length(noise_profile) > 0 do
+        # Simple spectral shaping: modulate amplitude of noise segments
+        # by the noise profile envelope. Each profile bin covers
+        # frame_length/profile_length samples.
+        profile_len = length(noise_profile)
+        segment_len = max(div(frame_length, profile_len), 1)
+
+        white_noise
+        |> Enum.chunk_every(segment_len)
+        |> Enum.zip(noise_profile)
+        |> Enum.flat_map(fn {chunk, weight} ->
+          # Weight controls how much energy this frequency band has.
+          Enum.map(chunk, fn s -> s * weight end)
+        end)
+        |> Enum.take(frame_length)
+      else
+        white_noise
+      end
+
+    # Scale to target level.
+    Enum.map(shaped, fn s -> s * level_linear end)
+  end
+
+  @impl true
+  def audio_spectral_vad(pcm, sample_rate, state) do
+    # Spectral voice activity detection using three features:
+    # 1. Spectral flatness (speech is less flat than noise)
+    # 2. Spectral centroid (speech is centred around 500-4000 Hz)
+    # 3. Zero-crossing rate (speech has lower ZCR than noise)
+    #
+    # Maintains running statistics for adaptive thresholding.
+
+    frame_len = length(pcm)
+
+    # Feature 1: Spectral flatness (geometric mean / arithmetic mean of magnitudes).
+    # Compute a simple DFT magnitude spectrum (not full FFT for reference impl).
+    n_bins = min(div(frame_len, 2), 256)
+    magnitudes = compute_magnitude_spectrum(pcm, n_bins, sample_rate)
+
+    spectral_flatness =
+      if length(magnitudes) > 0 do
+        geo_mean = :math.exp(Enum.reduce(magnitudes, 0.0, fn m, acc ->
+          acc + :math.log(max(m, 1.0e-12))
+        end) / max(length(magnitudes), 1))
+        arith_mean = Enum.sum(magnitudes) / max(length(magnitudes), 1)
+        if arith_mean > 1.0e-12, do: geo_mean / arith_mean, else: 1.0
+      else
+        1.0
+      end
+
+    # Feature 2: Spectral centroid (weighted average frequency).
+    total_energy = Enum.sum(magnitudes)
+    freq_resolution = sample_rate / (2.0 * max(n_bins, 1))
+    spectral_centroid =
+      if total_energy > 1.0e-12 do
+        magnitudes
+        |> Enum.with_index()
+        |> Enum.reduce(0.0, fn {mag, i}, acc -> acc + mag * (i * freq_resolution) end)
+        |> Kernel./(total_energy)
+      else
+        0.0
+      end
+
+    # Feature 3: Zero-crossing rate.
+    zcr =
+      pcm
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.count(fn [a, b] -> (a >= 0 and b < 0) or (a < 0 and b >= 0) end)
+      |> Kernel./(max(frame_len - 1, 1))
+
+    # Adaptive thresholds from running statistics.
+    noise_flatness = Map.get(state, :noise_flatness, 0.85)
+    noise_zcr = Map.get(state, :noise_zcr, 0.3)
+    frame_count = Map.get(state, :frame_count, 0)
+
+    # Speech detection: speech is less flat, has centroid in speech band, lower ZCR.
+    flatness_score = if spectral_flatness < noise_flatness * 0.7, do: 1.0, else: 0.0
+    centroid_score = if spectral_centroid > 300.0 and spectral_centroid < 4000.0, do: 1.0, else: 0.0
+    zcr_score = if zcr < noise_zcr * 1.5, do: 0.5, else: 0.0
+
+    confidence = (flatness_score * 0.5 + centroid_score * 0.3 + zcr_score * 0.2)
+    is_speech = confidence > 0.4
+
+    # Update noise statistics during non-speech frames.
+    new_state =
+      if not is_speech and frame_count > 10 do
+        alpha = 0.02  # Slow adaptation
+        %{state |
+          noise_flatness: noise_flatness * (1.0 - alpha) + spectral_flatness * alpha,
+          noise_zcr: noise_zcr * (1.0 - alpha) + zcr * alpha,
+          frame_count: frame_count + 1
+        }
+      else
+        Map.put(state, :frame_count, frame_count + 1)
+      end
+
+    {is_speech, confidence, new_state}
+  end
+
+  @impl true
+  def audio_perceptual_weight(magnitudes, sample_rate) do
+    # A-weighting curve applied to FFT magnitude bins.
+    # A-weighting approximates human hearing sensitivity:
+    #   - Strong attenuation below 500 Hz (we hear bass poorly)
+    #   - Flat response 1-6 kHz (most sensitive hearing range)
+    #   - Gradual rolloff above 6 kHz
+    #
+    # Formula: A(f) = 12194^2 * f^4 / ((f^2 + 20.6^2) * sqrt((f^2 + 107.7^2) * (f^2 + 737.9^2)) * (f^2 + 12194^2))
+    n_bins = length(magnitudes)
+    freq_resolution = sample_rate / (2.0 * max(n_bins, 1))
+
+    magnitudes
+    |> Enum.with_index()
+    |> Enum.map(fn {mag, i} ->
+      f = max((i + 1) * freq_resolution, 1.0)
+      f2 = f * f
+
+      # A-weighting transfer function (simplified).
+      numerator = 12194.0 * 12194.0 * f2 * f2
+      denominator =
+        (f2 + 20.6 * 20.6) *
+        :math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) *
+        (f2 + 12194.0 * 12194.0)
+
+      a_weight = if denominator > 0, do: numerator / denominator, else: 0.0
+
+      # Normalise so 1 kHz = 0 dB (A-weighting reference).
+      # At 1 kHz, A-weight ≈ 0.7943 in linear, so normalise by reciprocal.
+      normalised_weight = min(a_weight / 0.7943, 2.0)
+
+      mag * normalised_weight
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
   # Crypto kernel
   # ---------------------------------------------------------------------------
 
@@ -547,6 +751,25 @@ defmodule Burble.Coprocessor.ElixirBackend do
 
   defp binary_pad_or_trim(bin, size) when byte_size(bin) >= size, do: binary_part(bin, 0, size)
   defp binary_pad_or_trim(bin, size), do: bin <> <<0::size((size - byte_size(bin)) * 8)>>
+
+  # Compute a simple magnitude spectrum via DFT (reference implementation).
+  # For production, the Zig backend uses Cooley-Tukey FFT.
+  defp compute_magnitude_spectrum(pcm, n_bins, _sample_rate) do
+    frame_len = length(pcm)
+    pcm_list = Enum.take(pcm, frame_len)
+
+    for k <- 0..(n_bins - 1) do
+      {real, imag} =
+        pcm_list
+        |> Enum.with_index()
+        |> Enum.reduce({0.0, 0.0}, fn {sample, n}, {re, im} ->
+          angle = -2.0 * :math.pi() * k * n / frame_len
+          {re + sample * :math.cos(angle), im + sample * :math.sin(angle)}
+        end)
+
+      :math.sqrt(real * real + imag * imag) / max(frame_len, 1)
+    end
+  end
 
   defp rms_energy(pcm) do
     sum_sq = Enum.reduce(pcm, 0.0, fn s, acc -> acc + s * s end)

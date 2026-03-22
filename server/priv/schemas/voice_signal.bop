@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+//
+// voice_signal.bop — Bebop schema for Burble voice signaling protocol.
+//
+// Defines the wire format for all voice-related signaling messages exchanged
+// between Burble clients and the SFU server. Uses Bebop for compact binary
+// serialization with zero-copy reads and strong schema evolution guarantees.
+//
+// Message flow:
+//   Client → Server: Join, Leave, Mute, Unmute, Deafen, Offer, Answer, IceCandidate
+//   Server → Client: SpeakingStart, SpeakingStop, PositionUpdate
+//   Bidirectional: All messages may be relayed via the SFU to other participants.
+
+// ---------------------------------------------------------------------------
+// Enumerations
+// ---------------------------------------------------------------------------
+
+/// Audio codec negotiated for the voice session.
+enum AudioCodec : uint8 {
+  /// Opus — default, mandatory-to-implement codec (RFC 6716).
+  Opus = 1;
+  /// Lyra — Google's neural audio codec for ultra-low-bitrate fallback.
+  Lyra = 2;
+}
+
+/// Mute state of a participant's microphone.
+enum MuteState : uint8 {
+  /// Microphone is live (unmuted).
+  Unmuted = 0;
+  /// Self-muted by the participant.
+  SelfMuted = 1;
+  /// Server-muted by a moderator or Avow consent policy.
+  ServerMuted = 2;
+}
+
+/// Deafen state — whether the participant receives audio.
+enum DeafenState : uint8 {
+  /// Participant can hear all audio.
+  Undeafened = 0;
+  /// Self-deafened (implies self-muted as well).
+  SelfDeafened = 1;
+  /// Server-deafened by a moderator.
+  ServerDeafened = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Core data structures
+// ---------------------------------------------------------------------------
+
+/// Spatial position for 3D positional audio (used by BurbleSpatial extension
+/// and IDApTIK's Jessica/Q co-op spatial voice).
+struct Vec3 {
+  /// X coordinate in world space.
+  float32 x;
+  /// Y coordinate in world space.
+  float32 y;
+  /// Z coordinate in world space.
+  float32 z;
+}
+
+/// ICE candidate for WebRTC connectivity checks (RFC 8445).
+struct IceCandidatePayload {
+  /// The SDP candidate string (a=candidate:...).
+  string candidate;
+  /// SDP media description index this candidate belongs to.
+  uint16 sdpMLineIndex;
+  /// SDP mid attribute value for the media description.
+  string sdpMid;
+  /// Unique SFP fragment identifier for ICE restart scenarios.
+  string usernameFragment;
+}
+
+/// SDP offer or answer payload for WebRTC session negotiation.
+struct SdpPayload {
+  /// The full SDP body (v=0\r\n...).
+  string sdp;
+  /// Media type hint — "audio" for voice-only, "audio+video" for screen share.
+  string mediaType;
+}
+
+// ---------------------------------------------------------------------------
+// Signaling messages
+// ---------------------------------------------------------------------------
+
+/// Client → Server: request to join a voice channel.
+///
+/// The server responds with a stream of ParticipantJoined events for all
+/// existing members, followed by an Offer/Answer exchange to establish
+/// the WebRTC PeerConnection with the SFU.
+message Join {
+  /// Opaque room identifier (UUID v7 from VeriSimDB).
+  1 -> string roomId;
+  /// Opaque user identifier (UUID v7 from VeriSimDB).
+  2 -> string userId;
+  /// Display name for this session (may differ from account name).
+  3 -> string displayName;
+  /// Requested audio codec (server may override based on room config).
+  4 -> AudioCodec codec;
+  /// Whether to join self-muted (e.g., "listen-only" mode).
+  5 -> bool selfMuted;
+  /// Initial spatial position (optional — only for spatial rooms).
+  6 -> Vec3 position;
+}
+
+/// Client → Server: leave the current voice channel gracefully.
+///
+/// The server will tear down the PeerConnection and broadcast a
+/// ParticipantLeft event to remaining members.
+message Leave {
+  1 -> string roomId;
+  2 -> string userId;
+  /// Reason code — "user" for voluntary, "kicked" for moderation, "timeout".
+  3 -> string reason;
+}
+
+/// Client → Server: toggle microphone mute.
+message Mute {
+  1 -> string roomId;
+  2 -> string userId;
+  3 -> MuteState state;
+}
+
+/// Client → Server: remove mute (convenience — equivalent to Mute with Unmuted).
+message Unmute {
+  1 -> string roomId;
+  2 -> string userId;
+}
+
+/// Client → Server: toggle deafen (stop receiving audio).
+message Deafen {
+  1 -> string roomId;
+  2 -> string userId;
+  3 -> DeafenState state;
+}
+
+/// Server → Client: a participant has started speaking.
+///
+/// Triggered by the server's voice activity detection (VAD) on the
+/// participant's incoming RTP stream. Used by clients to show the
+/// "green ring" speaking indicator.
+message SpeakingStart {
+  1 -> string roomId;
+  2 -> string userId;
+  /// RMS audio level (0.0–1.0) for visual indicator scaling.
+  3 -> float32 audioLevel;
+}
+
+/// Server → Client: a participant has stopped speaking.
+message SpeakingStop {
+  1 -> string roomId;
+  2 -> string userId;
+}
+
+/// Bidirectional: update spatial position for 3D audio panning.
+///
+/// Sent by clients as their avatar moves (IDApTIK game world) or as
+/// the user drags their position in the BurbleSpatial 2D/3D view.
+/// The server relays to all other participants in the room.
+message PositionUpdate {
+  1 -> string roomId;
+  2 -> string userId;
+  /// New position in world coordinates.
+  3 -> Vec3 position;
+  /// Orientation (yaw) in radians — for directional audio.
+  4 -> float32 orientation;
+}
+
+/// Client → Server: WebRTC SDP offer to establish or renegotiate media.
+message Offer {
+  1 -> string roomId;
+  2 -> string userId;
+  3 -> SdpPayload sdp;
+}
+
+/// Server → Client: WebRTC SDP answer completing the offer/answer exchange.
+message Answer {
+  1 -> string roomId;
+  2 -> string userId;
+  3 -> SdpPayload sdp;
+}
+
+/// Bidirectional: exchange ICE candidates for connectivity checks.
+///
+/// Trickle ICE — candidates are sent as they are discovered by the
+/// ICE agent, rather than waiting for gathering to complete.
+message IceCandidate {
+  1 -> string roomId;
+  2 -> string userId;
+  3 -> IceCandidatePayload candidate;
+}
+
+// ---------------------------------------------------------------------------
+// Discriminated union — all voice signal messages in one envelope
+// ---------------------------------------------------------------------------
+
+/// Top-level envelope for voice signaling. Exactly one variant is set per
+/// wire message. The Bebop discriminator tag costs 1 byte on the wire.
+union VoiceSignal {
+  1 -> Join join;
+  2 -> Leave leave;
+  3 -> Mute mute;
+  4 -> Unmute unmute;
+  5 -> Deafen deafen;
+  6 -> SpeakingStart speakingStart;
+  7 -> SpeakingStop speakingStop;
+  8 -> PositionUpdate positionUpdate;
+  9 -> Offer offer;
+  10 -> Answer answer;
+  11 -> IceCandidate iceCandidate;
+}

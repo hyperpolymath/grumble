@@ -36,9 +36,9 @@ type audioDevice = {
 /// Voice engine state.
 type voiceEngine = {
   mutable rtcState: rtcState,
-  mutable localStream: option<{..}>,   // MediaStream
-  mutable peerConnection: option<{..}>, // RTCPeerConnection
-  mutable audioContext: option<{..}>,   // AudioContext
+  mutable localStream: option<JSON.t>,   // MediaStream (opaque)
+  mutable peerConnection: option<JSON.t>, // RTCPeerConnection (opaque)
+  mutable audioContext: option<JSON.t>,   // AudioContext (opaque)
   mutable isMuted: bool,
   mutable isDeafened: bool,
   mutable isSpeaking: bool,
@@ -74,16 +74,41 @@ let make = (profileConfig: BurbleClient.profileConfig): voiceEngine => {
 // ---------------------------------------------------------------------------
 
 /// Get user media (microphone access).
-@val external getUserMedia: {..} => promise<{..}> = "navigator.mediaDevices.getUserMedia"
+@val external getUserMedia: {..} => promise<JSON.t> = "navigator.mediaDevices.getUserMedia"
 
 /// Enumerate audio devices.
-@val external enumerateDevices: unit => promise<array<{..}>> = "navigator.mediaDevices.enumerateDevices"
+@val external enumerateDevices: unit => promise<array<JSON.t>> = "navigator.mediaDevices.enumerateDevices"
 
 /// Create an RTCPeerConnection.
-@new external makeRTCPeerConnection: {..} => {..} = "RTCPeerConnection"
+@new external makeRTCPeerConnection: {..} => JSON.t = "RTCPeerConnection"
 
 /// Create an AudioContext.
-@new external makeAudioContext: unit => {..} = "AudioContext"
+@new external makeAudioContext: unit => JSON.t = "AudioContext"
+
+// ---------------------------------------------------------------------------
+// External: property access helpers for opaque JS objects
+// ---------------------------------------------------------------------------
+
+/// Get a string property from a JSON.t value.
+@get_index external getStringProp: (JSON.t, string) => string = ""
+
+/// Get a JSON.t property from a JSON.t value.
+@get_index external getProp: (JSON.t, string) => JSON.t = ""
+
+/// Get audio tracks from a MediaStream.
+@send external getAudioTracks: JSON.t => array<JSON.t> = "getAudioTracks"
+
+/// Get all tracks from a MediaStream.
+@send external getTracks: JSON.t => array<JSON.t> = "getTracks"
+
+/// Set the enabled property on a track.
+@set external setTrackEnabled: (JSON.t, bool) => unit = "enabled"
+
+/// Stop a media track.
+@send external stopTrack: JSON.t => unit = "stop"
+
+/// Close a peer connection or audio context.
+@send external close: JSON.t => unit = "close"
 
 // ---------------------------------------------------------------------------
 // Media acquisition
@@ -107,7 +132,8 @@ let acquireMicrophone = async (engine: voiceEngine): result<unit, string> => {
     engine.localStream = Some(stream)
     Ok()
   } catch {
-  | exn => Error(exn->Exn.message->Option.getOr("Microphone access denied"))
+  | JsExn(exn) => Error(exn->JsExn.message->Option.getOr("Microphone access denied"))
+  | _ => Error("Microphone access denied")
   }
 }
 
@@ -116,11 +142,11 @@ let listDevices = async (): result<array<audioDevice>, string> => {
   try {
     let devices = await enumerateDevices()
     let audioDevices = devices->Array.filterMap(d => {
-      let kind: string = d["kind"]
+      let kind = getStringProp(d, "kind")
       if kind == "audioinput" || kind == "audiooutput" {
         Some({
-          deviceId: d["deviceId"],
-          label: d["label"],
+          deviceId: getStringProp(d, "deviceId"),
+          label: getStringProp(d, "label"),
           kind,
         })
       } else {
@@ -129,7 +155,8 @@ let listDevices = async (): result<array<audioDevice>, string> => {
     })
     Ok(audioDevices)
   } catch {
-  | exn => Error(exn->Exn.message->Option.getOr("Failed to enumerate devices"))
+  | JsExn(exn) => Error(exn->JsExn.message->Option.getOr("Failed to enumerate devices"))
+  | _ => Error("Failed to enumerate devices")
   }
 }
 
@@ -144,9 +171,9 @@ let toggleMute = (engine: voiceEngine): bool => {
   // Mute/unmute the local audio tracks.
   switch engine.localStream {
   | Some(stream) =>
-    let tracks: array<{..}> = stream["getAudioTracks"]()
+    let tracks = getAudioTracks(stream)
     tracks->Array.forEach(track => {
-      track["enabled"] = !engine.isMuted
+      setTrackEnabled(track, !engine.isMuted)
     })
   | None => ()
   }
@@ -187,22 +214,22 @@ let destroy = (engine: voiceEngine): unit => {
   // Stop local media tracks.
   switch engine.localStream {
   | Some(stream) =>
-    let tracks: array<{..}> = stream["getTracks"]()
+    let tracks = getTracks(stream)
     tracks->Array.forEach(track => {
-      track["stop"]()
+      stopTrack(track)
     })
   | None => ()
   }
 
   // Close peer connection.
   switch engine.peerConnection {
-  | Some(pc) => pc["close"]()
+  | Some(pc) => close(pc)
   | None => ()
   }
 
   // Close audio context.
   switch engine.audioContext {
-  | Some(ctx) => ctx["close"]()
+  | Some(ctx) => close(ctx)
   | None => ()
   }
 

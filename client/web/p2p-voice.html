@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Burble P2P Voice — serverless mode. No central server needed. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Burble P2P</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 2rem; }
+    h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+    .subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 0.9rem; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 1.5rem; max-width: 500px; width: 100%; margin-bottom: 1rem; }
+    .card h2 { font-size: 1.1rem; margin-bottom: 0.8rem; }
+    label { display: block; color: #8b949e; font-size: 0.85rem; margin-bottom: 0.3rem; }
+    input, textarea { width: 100%; padding: 0.6rem; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 0.9rem; margin-bottom: 0.8rem; font-family: monospace; }
+    textarea { height: 80px; resize: vertical; }
+    input:focus, textarea:focus { outline: none; border-color: #58a6ff; }
+    button { padding: 0.6rem 1.2rem; border: none; border-radius: 6px; font-size: 0.9rem; cursor: pointer; margin-right: 0.5rem; margin-bottom: 0.5rem; }
+    .btn-green { background: #238636; color: #fff; }
+    .btn-green:hover { background: #2ea043; }
+    .btn-blue { background: #1f6feb; color: #fff; }
+    .btn-blue:hover { background: #388bfd; }
+    .btn-red { background: #da3633; color: #fff; }
+    .btn-red:hover { background: #f85149; }
+    .btn-grey { background: #21262d; color: #8b949e; }
+    .btn-grey:hover { background: #30363d; }
+    .muted { background: #da3633 !important; }
+    .status { padding: 0.5rem; border-radius: 6px; margin-bottom: 0.8rem; font-size: 0.85rem; text-align: center; }
+    .status.idle { background: #1c1e23; color: #8b949e; }
+    .status.waiting { background: #1a1500; color: #d29922; }
+    .status.connected { background: #0d2818; color: #3fb950; }
+    .status.error { background: #1a0000; color: #f85149; }
+    .meter { height: 6px; background: #21262d; border-radius: 3px; margin: 0.3rem 0 0.8rem; overflow: hidden; }
+    .meter-fill { height: 100%; background: #3fb950; transition: width 80ms; width: 0%; }
+    .step-num { display: inline-block; width: 24px; height: 24px; background: #1f6feb; border-radius: 50%; text-align: center; line-height: 24px; font-size: 0.8rem; font-weight: bold; margin-right: 0.5rem; }
+    .controls { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
+    .hidden { display: none !important; }
+    .instructions { color: #8b949e; font-size: 0.85rem; line-height: 1.5; margin-bottom: 0.8rem; }
+    .copy-hint { color: #58a6ff; font-size: 0.8rem; cursor: pointer; }
+    .copy-hint:hover { text-decoration: underline; }
+    audio { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Burble P2P</h1>
+  <p class="subtitle">Direct voice — no server, no account, no tracking</p>
+
+  <div id="status" class="status idle">Ready to connect</div>
+
+  <!-- Step 1: Get microphone -->
+  <div class="card" id="step-mic">
+    <h2><span class="step-num">1</span>Microphone</h2>
+    <button class="btn-green" id="btn-mic" onclick="getMic()">Allow Microphone</button>
+    <div class="meter" id="mic-meter-wrap" style="display:none"><div class="meter-fill" id="mic-meter"></div></div>
+  </div>
+
+  <!-- Step 2: Create or Join -->
+  <div class="card hidden" id="step-role">
+    <h2><span class="step-num">2</span>Connect</h2>
+    <p class="instructions">One person creates the room, the other joins it. Doesn't matter who does which.</p>
+    <button class="btn-green" onclick="createOffer()">Create Room</button>
+    <button class="btn-blue" onclick="showJoin()">Join Room</button>
+  </div>
+
+  <!-- Step 2a: Creator flow -->
+  <div class="card hidden" id="step-offer">
+    <h2><span class="step-num">2</span>Send this code to the other person</h2>
+    <textarea id="offer-text" readonly onclick="copyOffer()"></textarea>
+    <span class="copy-hint" onclick="copyOffer()">Click to copy</span>
+  </div>
+
+  <div class="card hidden" id="step-answer-input">
+    <h2><span class="step-num">3</span>Paste their reply code here</h2>
+    <textarea id="answer-text" placeholder="Paste the reply code here..."></textarea>
+    <button class="btn-green" onclick="acceptAnswer()">Connect</button>
+  </div>
+
+  <!-- Step 2b: Joiner flow -->
+  <div class="card hidden" id="step-offer-input">
+    <h2><span class="step-num">2</span>Paste the room code here</h2>
+    <textarea id="remote-offer-text" placeholder="Paste the room code here..."></textarea>
+    <button class="btn-green" onclick="createAnswer()">Generate Reply</button>
+  </div>
+
+  <div class="card hidden" id="step-answer">
+    <h2><span class="step-num">3</span>Send this reply code back</h2>
+    <textarea id="answer-out-text" readonly onclick="copyAnswer()"></textarea>
+    <span class="copy-hint" onclick="copyAnswer()">Click to copy</span>
+    <p class="instructions" style="margin-top:0.5rem">Once they paste your reply, you'll be connected.</p>
+  </div>
+
+  <!-- Connected view -->
+  <div class="card hidden" id="step-connected">
+    <h2>Connected</h2>
+    <label>Your microphone</label>
+    <div class="meter"><div class="meter-fill" id="mic-meter-live"></div></div>
+    <label>Remote audio</label>
+    <div class="meter"><div class="meter-fill" id="remote-meter"></div></div>
+    <div class="controls">
+      <button id="btn-mute" class="btn-green" onclick="toggleMute()">Mute</button>
+      <button id="btn-deafen" class="btn-green" onclick="toggleDeafen()">Deafen</button>
+    </div>
+    <div class="controls" style="margin-top:0.5rem">
+      <button class="btn-red" onclick="hangUp()">Hang Up</button>
+    </div>
+    <audio id="remote-audio" autoplay></audio>
+  </div>
+
+  <script>
+    // SPDX-License-Identifier: PMPL-1.0-or-later
+    // Burble P2P — WebRTC direct voice with copy-paste signaling.
+    // Zero server. Zero account. Zero tracking. Just voice.
+
+    const ICE_SERVERS = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+
+    let pc = null;
+    let localStream = null;
+    let remoteStream = null;
+    let muted = false;
+    let deafened = false;
+    let micAnalyser = null;
+    let remoteAnalyser = null;
+    let micData = null;
+    let remoteData = null;
+    let animFrame = null;
+
+    // ── Microphone ──────────────────────────────────────────────────────
+
+    async function getMic() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+
+        // Mic level meter
+        const ctx = new AudioContext();
+        const src = ctx.createMediaStreamSource(localStream);
+        micAnalyser = ctx.createAnalyser();
+        micAnalyser.fftSize = 256;
+        micData = new Uint8Array(micAnalyser.frequencyBinCount);
+        src.connect(micAnalyser);
+
+        document.getElementById('mic-meter-wrap').style.display = '';
+        document.getElementById('btn-mic').textContent = 'Microphone ready';
+        document.getElementById('btn-mic').disabled = true;
+        document.getElementById('step-role').classList.remove('hidden');
+        startMeters();
+        setStatus('idle', 'Microphone ready — create or join a room');
+      } catch (e) {
+        setStatus('error', 'Microphone access denied: ' + e.message);
+      }
+    }
+
+    // ── WebRTC ──────────────────────────────────────────────────────────
+
+    function createPC() {
+      pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+      // Add local audio tracks
+      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+      // Receive remote audio
+      pc.ontrack = (ev) => {
+        remoteStream = ev.streams[0];
+        document.getElementById('remote-audio').srcObject = remoteStream;
+
+        // Remote level meter
+        const ctx = new AudioContext();
+        const src = ctx.createMediaStreamSource(remoteStream);
+        remoteAnalyser = ctx.createAnalyser();
+        remoteAnalyser.fftSize = 256;
+        remoteData = new Uint8Array(remoteAnalyser.frequencyBinCount);
+        src.connect(remoteAnalyser);
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          showConnected();
+        } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+          setStatus('error', 'Connection lost');
+        }
+      };
+
+      return pc;
+    }
+
+    // ── Creator flow ────────────────────────────────────────────────────
+
+    async function createOffer() {
+      setStatus('waiting', 'Creating room...');
+      createPC();
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait for ICE gathering to complete
+      await new Promise(resolve => {
+        if (pc.iceGatheringState === 'complete') return resolve();
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete') resolve();
+        };
+        // Timeout after 5s — use what we have
+        setTimeout(resolve, 5000);
+      });
+
+      const code = btoa(JSON.stringify(pc.localDescription));
+      document.getElementById('offer-text').value = code;
+
+      document.getElementById('step-role').classList.add('hidden');
+      document.getElementById('step-offer').classList.remove('hidden');
+      document.getElementById('step-answer-input').classList.remove('hidden');
+      setStatus('waiting', 'Room created — send the code and wait for reply');
+    }
+
+    async function acceptAnswer() {
+      try {
+        const code = document.getElementById('answer-text').value.trim();
+        const answer = JSON.parse(atob(code));
+        await pc.setRemoteDescription(answer);
+        setStatus('waiting', 'Connecting...');
+      } catch (e) {
+        setStatus('error', 'Invalid reply code: ' + e.message);
+      }
+    }
+
+    // ── Joiner flow ─────────────────────────────────────────────────────
+
+    function showJoin() {
+      document.getElementById('step-role').classList.add('hidden');
+      document.getElementById('step-offer-input').classList.remove('hidden');
+      setStatus('waiting', 'Paste the room code to join');
+    }
+
+    async function createAnswer() {
+      try {
+        const code = document.getElementById('remote-offer-text').value.trim();
+        const offer = JSON.parse(atob(code));
+
+        createPC();
+        await pc.setRemoteDescription(offer);
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        // Wait for ICE gathering
+        await new Promise(resolve => {
+          if (pc.iceGatheringState === 'complete') return resolve();
+          pc.onicegatheringstatechange = () => {
+            if (pc.iceGatheringState === 'complete') resolve();
+          };
+          setTimeout(resolve, 5000);
+        });
+
+        const replyCode = btoa(JSON.stringify(pc.localDescription));
+        document.getElementById('answer-out-text').value = replyCode;
+
+        document.getElementById('step-offer-input').classList.add('hidden');
+        document.getElementById('step-answer').classList.remove('hidden');
+        setStatus('waiting', 'Reply generated — send it back and wait for connection');
+      } catch (e) {
+        setStatus('error', 'Invalid room code: ' + e.message);
+      }
+    }
+
+    // ── Connected ───────────────────────────────────────────────────────
+
+    function showConnected() {
+      document.querySelectorAll('.card').forEach(c => c.classList.add('hidden'));
+      document.getElementById('step-connected').classList.remove('hidden');
+      setStatus('connected', 'Voice connected — P2P, no server involved');
+    }
+
+    function toggleMute() {
+      muted = !muted;
+      localStream?.getAudioTracks().forEach(t => t.enabled = !muted);
+      const btn = document.getElementById('btn-mute');
+      btn.textContent = muted ? 'Unmute' : 'Mute';
+      btn.classList.toggle('muted', muted);
+    }
+
+    function toggleDeafen() {
+      deafened = !deafened;
+      if (remoteStream) remoteStream.getAudioTracks().forEach(t => t.enabled = !deafened);
+      const btn = document.getElementById('btn-deafen');
+      btn.textContent = deafened ? 'Undeafen' : 'Deafen';
+      btn.classList.toggle('muted', deafened);
+    }
+
+    function hangUp() {
+      if (pc) { pc.close(); pc = null; }
+      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+      if (remoteStream) { remoteStream.getTracks().forEach(t => t.stop()); remoteStream = null; }
+      if (animFrame) cancelAnimationFrame(animFrame);
+      location.reload();
+    }
+
+    // ── Meters ──────────────────────────────────────────────────────────
+
+    function startMeters() {
+      function update() {
+        if (micAnalyser && micData) {
+          micAnalyser.getByteFrequencyData(micData);
+          const avg = micData.reduce((a, b) => a + b, 0) / micData.length;
+          const pct = Math.min(100, (avg / 100) * 100);
+          const el1 = document.getElementById('mic-meter');
+          const el2 = document.getElementById('mic-meter-live');
+          if (el1) el1.style.width = pct + '%';
+          if (el2) el2.style.width = pct + '%';
+        }
+        if (remoteAnalyser && remoteData) {
+          remoteAnalyser.getByteFrequencyData(remoteData);
+          const avg = remoteData.reduce((a, b) => a + b, 0) / remoteData.length;
+          const pct = Math.min(100, (avg / 100) * 100);
+          const el = document.getElementById('remote-meter');
+          if (el) el.style.width = pct + '%';
+        }
+        animFrame = requestAnimationFrame(update);
+      }
+      update();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    function setStatus(cls, text) {
+      const el = document.getElementById('status');
+      el.className = 'status ' + cls;
+      el.textContent = text;
+    }
+
+    async function copyOffer() {
+      const text = document.getElementById('offer-text').value;
+      await navigator.clipboard.writeText(text);
+      setStatus('waiting', 'Code copied! Send it to the other person.');
+    }
+
+    async function copyAnswer() {
+      const text = document.getElementById('answer-out-text').value;
+      await navigator.clipboard.writeText(text);
+      setStatus('waiting', 'Reply copied! Send it back to the room creator.');
+    }
+  </script>
+</body>
+</html>

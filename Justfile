@@ -71,6 +71,10 @@ uninstall:
 join:
     xdg-open "file://{{justfile_directory()}}/client/web/quick-join.html"
 
+# P2P voice — no server needed, just share a code
+p2p:
+    xdg-open "file://{{justfile_directory()}}/client/web/p2p-voice.html"
+
 # Start the Elixir server (dev mode)
 server:
     cd server && mix phx.server

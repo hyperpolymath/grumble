@@ -108,6 +108,17 @@
     <audio id="remote-audio" autoplay></audio>
   </div>
 
+  <!-- AI Data Channel -->
+  <div class="card hidden" id="step-ai-channel">
+    <h2>AI Channel</h2>
+    <p class="instructions">A JSON data channel running alongside voice. Claude (or any AI) on either side can send structured messages peer-to-peer. Open your browser console or use the API below.</p>
+    <div id="ai-log" style="background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:0.5rem; max-height:200px; overflow-y:auto; font-family:monospace; font-size:0.8rem; margin-bottom:0.8rem; white-space:pre-wrap;"></div>
+    <div style="display:flex; gap:0.5rem;">
+      <input id="ai-msg" type="text" placeholder='{"type":"ping"}' style="flex:1; margin-bottom:0;" />
+      <button class="btn-blue" onclick="sendAI()" style="margin:0;">Send</button>
+    </div>
+  </div>
+
   <script>
     // SPDX-License-Identifier: PMPL-1.0-or-later
     // Burble P2P — WebRTC direct voice with copy-paste signaling.
@@ -129,6 +140,7 @@
     let micData = null;
     let remoteData = null;
     let animFrame = null;
+    let aiChannel = null;  // WebRTC DataChannel for AI-to-AI comms
 
     // ── Microphone ──────────────────────────────────────────────────────
 
@@ -187,7 +199,90 @@
         }
       };
 
+      // ── AI Data Channel ───────────────────────────────────────────────
+      // Creator side creates the channel; joiner side receives it via ondatachannel.
+      // Protocol: JSON messages over a reliable, ordered WebRTC DataChannel.
+      //
+      // API for Claude / AI agents (accessible from browser console or MCP):
+      //   window.burble.send({type: "ping"})           — send a message
+      //   window.burble.onMessage = (msg) => { ... }   — receive callback
+      //   window.burble.history                         — all messages
+      //
+      // Example Claude-to-Claude exchange:
+      //   {type: "task", from: "claude-a", payload: {action: "review", file: "foo.rs"}}
+      //   {type: "result", from: "claude-b", payload: {status: "ok", issues: []}}
+
+      pc.ondatachannel = (ev) => {
+        aiChannel = ev.channel;
+        setupAIChannel(aiChannel);
+      };
+
       return pc;
+    }
+
+    function createAIDataChannel() {
+      aiChannel = pc.createDataChannel('burble-ai', { ordered: true });
+      setupAIChannel(aiChannel);
+    }
+
+    function setupAIChannel(ch) {
+      ch.onopen = () => {
+        aiLog('system', 'AI data channel open — peer-to-peer JSON messaging active');
+        document.getElementById('step-ai-channel').classList.remove('hidden');
+      };
+
+      ch.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          aiLog('recv', JSON.stringify(msg, null, 2));
+          // Fire callback for programmatic consumers (Claude, MCP, etc.)
+          if (window.burble?.onMessage) window.burble.onMessage(msg);
+        } catch (e) {
+          aiLog('recv', ev.data);
+        }
+      };
+
+      ch.onclose = () => aiLog('system', 'AI data channel closed');
+
+      // Expose global API for AI agents
+      window.burble = {
+        send: (msg) => {
+          if (!aiChannel || aiChannel.readyState !== 'open') {
+            console.error('[Burble AI] Channel not open');
+            return false;
+          }
+          const payload = typeof msg === 'string' ? msg : JSON.stringify(msg);
+          aiChannel.send(payload);
+          aiLog('sent', typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2));
+          return true;
+        },
+        onMessage: null,  // Set this to receive messages: window.burble.onMessage = (msg) => { ... }
+        history: [],
+        channel: () => aiChannel,
+        isOpen: () => aiChannel?.readyState === 'open',
+      };
+    }
+
+    function aiLog(direction, text) {
+      const el = document.getElementById('ai-log');
+      const time = new Date().toLocaleTimeString();
+      const prefix = direction === 'sent' ? '→' : direction === 'recv' ? '←' : '●';
+      const color = direction === 'sent' ? '#58a6ff' : direction === 'recv' ? '#3fb950' : '#8b949e';
+      el.innerHTML += `<span style="color:${color}">${prefix} ${time}</span> ${text}\n`;
+      el.scrollTop = el.scrollHeight;
+      if (window.burble) window.burble.history.push({ direction, text, time });
+    }
+
+    function sendAI() {
+      const input = document.getElementById('ai-msg');
+      const text = input.value.trim();
+      if (!text) return;
+      try {
+        window.burble.send(JSON.parse(text));
+      } catch (e) {
+        window.burble.send(text);
+      }
+      input.value = '';
     }
 
     // ── Creator flow ────────────────────────────────────────────────────
@@ -195,6 +290,7 @@
     async function createOffer() {
       setStatus('waiting', 'Creating room...');
       createPC();
+      createAIDataChannel();  // Creator opens the data channel
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);

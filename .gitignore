@@ -29,6 +29,11 @@ client/web/.cache/
 
 # Deno
 client/web/deno.lock
+client/lib/deno.lock
+
+# Client lib build artifacts
+client/lib/node_modules/
+client/lib/lib/
 
 # Desktop (Tauri)
 client/desktop/target/

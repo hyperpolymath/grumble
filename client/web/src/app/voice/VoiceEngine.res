@@ -1024,6 +1024,42 @@ let getPttKeyCode = (engine: t): string => engine.config.pttKeyCode
 let getPeerVolume = (engine: t, peerId: string): float =>
   Dict.get(engine.peerVolumes, peerId)->Option.getOr(1.0)
 
+/// Get whether browser-level noise suppression is enabled.
+let getNoiseSuppression = (engine: t): bool => engine.config.noiseSuppression
+
+/// Set browser-level noise suppression on/off.
+/// Note: This changes the config flag. To apply it to an active stream,
+/// the getUserMedia constraints would need to be re-applied (reconnect).
+let setNoiseSuppression = (engine: t, enabled: bool): unit => {
+  engine.config = {...engine.config, noiseSuppression: enabled}
+  Console.log2("[Burble] Noise suppression:", if enabled { "on" } else { "off" })
+}
+
+/// Get whether comfort noise is enabled in the config.
+/// Comfort noise is managed by AudioPipeline but the flag lives here
+/// for cross-module state queries.
+let getComfortNoise = (engine: t): bool => engine.config.coprocessorEnabled
+
+/// Set comfort noise enabled/disabled.
+/// The actual comfort noise generation is handled by AudioPipeline;
+/// this flag is a shared state accessor for coordination.
+let setComfortNoise = (engine: t, enabled: bool): unit => {
+  engine.config = {...engine.config, coprocessorEnabled: enabled}
+  Console.log2("[Burble] Comfort noise:", if enabled { "on" } else { "off" })
+}
+
+/// Get the current VAD threshold (0.0 to 1.0 linear scale).
+let getVadThreshold = (engine: t): float => engine.config.vadThreshold
+
+/// Set the VAD threshold (0.0 to 1.0 linear scale).
+/// Lower values are more sensitive (detect quieter speech).
+/// Typical range: 0.01 (very sensitive) to 0.1 (requires loud speech).
+let setVadThreshold = (engine: t, threshold: float): unit => {
+  let clamped = Math.max(0.0, Math.min(1.0, threshold))
+  engine.config = {...engine.config, vadThreshold: clamped}
+  Console.log2("[Burble] VAD threshold:", Float.toString(clamped))
+}
+
 // ---------------------------------------------------------------------------
 // Callback registration — used by the UI layer
 // ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ defmodule BurbleWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug BurbleWeb.Plugs.RateLimiter
   end
 
   pipeline :authenticated_api do
@@ -40,6 +41,13 @@ defmodule BurbleWeb.Router do
 
     # Invite acceptance (public — uses invite token, not auth token)
     post "/invites/:token/accept", InviteController, :accept
+
+    # Setup wizard (public — first-time configuration)
+    get "/setup/check", SetupController, :check
+    post "/setup/audio-devices", SetupController, :audio_devices
+    post "/setup/test-microphone", SetupController, :test_microphone
+    post "/setup/test-speakers", SetupController, :test_speakers
+    post "/setup/complete", SetupController, :complete
 
     # Diagnostics (public — self-test before joining voice)
     get "/diagnostics/self-test", DiagnosticsController, :self_test

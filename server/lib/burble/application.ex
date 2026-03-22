@@ -61,6 +61,16 @@ defmodule Burble.Application do
       # Telemetry
       Burble.Telemetry,
 
+      # E2EE key rotation scheduler (rotates per-room keys for forward secrecy)
+      Burble.Security.KeyRotation,
+
+      # PTP precision timing (clock synchronisation for multi-node playout)
+      Burble.Timing.PTP,
+
+      # LMDB playout buffer registry (individual buffers started per-room via DynamicSupervisor)
+      # Note: LMDBPlayout instances are started dynamically per room, not here.
+      # The RoomSupervisor above handles their lifecycle.
+
       # Web endpoint (must be last — depends on PubSub and Presence)
       BurbleWeb.Endpoint
     ]

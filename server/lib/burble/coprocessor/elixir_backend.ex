@@ -327,6 +327,37 @@ defmodule Burble.Coprocessor.ElixirBackend do
   end
 
   # ---------------------------------------------------------------------------
+  # Signal science — advanced DSP (delegates to SignalScience module)
+  # ---------------------------------------------------------------------------
+
+  alias Burble.Coprocessor.SignalScience
+
+  @doc "Wiener filter for spectral noise reduction. Delegates to SignalScience."
+  def wiener_filter(pcm, sample_rate, state) do
+    SignalScience.wiener_filter(pcm, sample_rate, state)
+  end
+
+  @doc "De-reverberation via spectral subtraction. Delegates to SignalScience."
+  def dereverberate(pcm, sample_rate, state) do
+    SignalScience.dereverberate(pcm, sample_rate, state)
+  end
+
+  @doc "Spectral packet loss concealment. Delegates to SignalScience."
+  def spectral_plc(state) do
+    SignalScience.spectral_plc(state)
+  end
+
+  @doc "Update PLC state with a good frame. Delegates to SignalScience."
+  def plc_receive_good_frame(pcm, state) do
+    SignalScience.plc_receive_good_frame(pcm, state)
+  end
+
+  @doc "Per-user adaptive VAD. Delegates to SignalScience."
+  def per_user_vad(pcm, user_id, sample_rate, state) do
+    SignalScience.per_user_vad(pcm, user_id, sample_rate, state)
+  end
+
+  # ---------------------------------------------------------------------------
   # Crypto kernel
   # ---------------------------------------------------------------------------
 

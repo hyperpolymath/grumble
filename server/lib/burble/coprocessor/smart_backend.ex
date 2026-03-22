@@ -201,6 +201,37 @@ defmodule Burble.Coprocessor.SmartBackend do
   end
 
   # ---------------------------------------------------------------------------
+  # Signal science — advanced DSP dispatch
+  # ---------------------------------------------------------------------------
+
+  @doc "Wiener filter for spectral noise reduction. Routes to Elixir (Zig candidate Phase 2)."
+  def wiener_filter(pcm, sample_rate, state) do
+    # FFT-heavy — good Zig candidate once SIMD FFT NIF lands.
+    always_elixir().wiener_filter(pcm, sample_rate, state)
+  end
+
+  @doc "De-reverberation via spectral subtraction. Routes to Elixir (Zig candidate Phase 2)."
+  def dereverberate(pcm, sample_rate, state) do
+    # FFT + spectral subtraction — Zig candidate.
+    always_elixir().dereverberate(pcm, sample_rate, state)
+  end
+
+  @doc "Spectral packet loss concealment. Routes to Elixir."
+  def spectral_plc(state) do
+    always_elixir().spectral_plc(state)
+  end
+
+  @doc "Update PLC state with a good frame. Routes to Elixir."
+  def plc_receive_good_frame(pcm, state) do
+    always_elixir().plc_receive_good_frame(pcm, state)
+  end
+
+  @doc "Per-user adaptive VAD. Routes to Elixir."
+  def per_user_vad(pcm, user_id, sample_rate, state) do
+    always_elixir().per_user_vad(pcm, user_id, sample_rate, state)
+  end
+
+  # ---------------------------------------------------------------------------
   # Compression kernel — dispatch
   # ---------------------------------------------------------------------------
 

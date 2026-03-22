@@ -1,0 +1,1066 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
+//
+// AudioPipeline — Client-side audio processing pipeline controls.
+//
+// Manages coprocessor feature toggles wired to UI controls:
+//   - PTT (Push-to-Talk) with configurable key binding
+//   - VAD (Voice Activity Detection) with threshold and smoothing
+//   - Noise suppression (off / low / medium / high) via spectral gating
+//   - AGC (Automatic Gain Control) — always on via DynamicsCompressor
+//   - Comfort noise injection during VAD silence
+//
+// This module renders a pipeline control panel that integrates with
+// VoiceEngine's existing audio graph. It creates AudioWorklet nodes
+// for noise suppression and comfort noise, and a DynamicsCompressor
+// for AGC. The panel can be appended to any container element.
+//
+// Framework-agnostic: no React, no JSX, no TEA. Pure DOM manipulation
+// matching the existing codebase pattern (see VoiceControls.res).
+
+// ---------------------------------------------------------------------------
+// Type definitions
+// ---------------------------------------------------------------------------
+
+/// Noise suppression intensity levels. Each level corresponds to a
+/// different spectral gating threshold in the AudioWorklet.
+type noiseSuppression =
+  | /// No noise suppression applied.
+    Off
+  | /// Light suppression — removes only loud background noise.
+    Low
+  | /// Moderate suppression — good balance of clarity and noise removal.
+    Medium
+  | /// Aggressive suppression — maximum noise removal, may affect voice.
+    High
+
+/// Pipeline state — all mutable audio processing parameters.
+/// Central state object for the audio pipeline controls panel.
+type pipelineState = {
+  /// Whether Push-to-Talk mode is enabled (vs VAD).
+  mutable pttEnabled: bool,
+  /// The keyboard key code used for PTT (e.g., "Space", "KeyV").
+  mutable pttKey: string,
+  /// Whether the PTT key is currently held down (transmitting).
+  mutable pttActive: bool,
+  /// Whether Voice Activity Detection mode is enabled.
+  mutable vadEnabled: bool,
+  /// VAD threshold in dB (default: -40dB). Values closer to 0 are louder.
+  mutable vadThreshold: float,
+  /// Whether the VAD currently detects speech (above threshold).
+  mutable vadSpeaking: bool,
+  /// Current noise suppression level.
+  mutable noiseSuppression: noiseSuppression,
+  /// Whether AGC is enabled (always true by default).
+  mutable agcEnabled: bool,
+  /// Whether comfort noise injection is enabled.
+  mutable comfortNoiseEnabled: bool,
+  /// The AudioContext powering the processing graph.
+  mutable audioContext: option<{..}>,
+  /// AnalyserNode for VAD speech detection via FFT.
+  mutable analyser: option<{..}>,
+  /// GainNode for AGC output level control.
+  mutable gainNode: option<{..}>,
+  /// DynamicsCompressor acting as AGC.
+  mutable compressorNode: option<{..}>,
+  /// GainNode controlling comfort noise level.
+  mutable comfortNoiseGain: option<{..}>,
+  /// BufferSourceNode generating pink noise for comfort noise.
+  mutable comfortNoiseSource: option<{..}>,
+  /// Timeout ID for VAD smoothing hold timer (prevents rapid on/off).
+  mutable vadHoldTimer: option<float>,
+  /// Whether VAD is in the hold period (stays "speaking" briefly after silence).
+  mutable vadHolding: bool,
+  /// The root DOM element for the pipeline controls panel.
+  mutable rootElement: option<{..}>,
+  /// Reference to the VoiceEngine for dispatching audio state changes.
+  mutable engine: option<VoiceEngine.t>,
+  /// The requestAnimationFrame ID for the UI update loop.
+  mutable rafId: option<int>,
+}
+
+// ---------------------------------------------------------------------------
+// External bindings — DOM and Web Audio
+// ---------------------------------------------------------------------------
+
+/// Get the document object for DOM manipulation.
+@val external document: {..} = "document"
+
+/// Create a new DOM element by tag name.
+@val @scope("document")
+external createElement: string => {..} = "createElement"
+
+/// Create a text node for DOM insertion.
+@val @scope("document")
+external createTextNode: string => {..} = "createTextNode"
+
+/// Request the next animation frame for UI updates.
+@val external requestAnimationFrame: (float => unit) => int = "requestAnimationFrame"
+
+/// Cancel a pending animation frame request.
+@val external cancelAnimationFrame: int => unit = "cancelAnimationFrame"
+
+/// Register a keydown event listener on the window (for PTT).
+@val @scope("window")
+external addKeyDownListener: (@as("keydown") _, {..} => unit) => unit = "addEventListener"
+
+/// Register a keyup event listener on the window (for PTT).
+@val @scope("window")
+external addKeyUpListener: (@as("keyup") _, {..} => unit) => unit = "addEventListener"
+
+/// Set a one-shot timer. Returns a timeout ID for cancellation.
+@val external setTimeout: (unit => unit, int) => float = "setTimeout"
+
+/// Cancel a one-shot timer by its timeout ID.
+@val external clearTimeout: float => unit = "clearTimeout"
+
+/// Construct a new AudioContext for Web Audio processing.
+@new external makeAudioContext: unit => {..} = "AudioContext"
+
+/// Access the console for debug logging.
+@val external console: {..} = "console"
+
+// ---------------------------------------------------------------------------
+// Constants — audio processing defaults
+// ---------------------------------------------------------------------------
+
+/// Default PTT key code (spacebar).
+let defaultPttKey = "Space"
+
+/// Default VAD threshold in dB. Speech is typically above -30dB,
+/// so -40dB catches most speech while rejecting ambient noise.
+let defaultVadThreshold = -40.0
+
+/// VAD hold time in milliseconds. After speech drops below threshold,
+/// keep the "speaking" state for this duration to avoid choppy gating.
+let vadHoldTimeMs = 100
+
+/// Comfort noise level in dB (relative). Very quiet pink noise to
+/// fill silence and prevent the "dead air" effect.
+let comfortNoiseDb = -50.0
+
+/// AGC target level in LUFS. The compressor aims to normalise
+/// output to approximately this loudness.
+let agcTargetLufs = -20.0
+
+/// Spectral gating threshold for each noise suppression level.
+/// These values are the minimum signal-to-noise ratio (in dB)
+/// below which the signal is attenuated.
+let suppressionThreshold = (level: noiseSuppression): float =>
+  switch level {
+  | Off => 0.0
+  | Low => -60.0
+  | Medium => -45.0
+  | High => -30.0
+  }
+
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
+
+/// Create initial pipeline state with sensible defaults.
+/// PTT is disabled by default (VAD mode). AGC is always on.
+/// Call `render` to build the DOM and `attachToEngine` to wire up audio.
+let make = (): pipelineState => {
+  pttEnabled: false,
+  pttKey: defaultPttKey,
+  pttActive: false,
+  vadEnabled: true,
+  vadThreshold: defaultVadThreshold,
+  vadSpeaking: false,
+  noiseSuppression: Off,
+  agcEnabled: true,
+  comfortNoiseEnabled: false,
+  audioContext: None,
+  analyser: None,
+  gainNode: None,
+  compressorNode: None,
+  comfortNoiseGain: None,
+  comfortNoiseSource: None,
+  vadHoldTimer: None,
+  vadHolding: false,
+  rootElement: None,
+  engine: None,
+  rafId: None,
+}
+
+// ---------------------------------------------------------------------------
+// Audio graph setup — AGC via DynamicsCompressor
+// ---------------------------------------------------------------------------
+
+/// Set up the AGC compressor node. Uses a DynamicsCompressor with
+/// settings tuned to act as an automatic gain controller targeting
+/// approximately -20 LUFS output level.
+///
+/// The compressor parameters:
+///   - threshold: -24dB (start compressing above this)
+///   - knee: 30dB (soft knee for natural-sounding compression)
+///   - ratio: 12:1 (heavy compression for consistent level)
+///   - attack: 0.003s (fast attack to catch transients)
+///   - release: 0.25s (moderate release for smooth gain riding)
+let setupAgc = (state: pipelineState, ctx: {..}, sourceNode: {..}): {..} => {
+  let compressor = ctx["createDynamicsCompressor"]()
+
+  // Configure compressor to act as AGC.
+  // Threshold is set relative to the target LUFS level.
+  compressor["threshold"]["setValueAtTime"](agcTargetLufs -. 4.0, ctx["currentTime"])
+  compressor["knee"]["setValueAtTime"](30.0, ctx["currentTime"])
+  compressor["ratio"]["setValueAtTime"](12.0, ctx["currentTime"])
+  compressor["attack"]["setValueAtTime"](0.003, ctx["currentTime"])
+  compressor["release"]["setValueAtTime"](0.25, ctx["currentTime"])
+
+  // Create a makeup gain node to bring the compressed signal
+  // up to the target level.
+  let makeupGain = ctx["createGain"]()
+  // Makeup gain compensates for compression. ~6dB boost.
+  makeupGain["gain"]["setValueAtTime"](2.0, ctx["currentTime"])
+
+  // Wire: source -> compressor -> makeupGain
+  sourceNode["connect"](compressor)
+  compressor["connect"](makeupGain)
+
+  state.compressorNode = Some(compressor)
+  state.gainNode = Some(makeupGain)
+
+  console["log"]("[Burble:Pipeline] AGC enabled (target ~-20 LUFS)")
+
+  // Return the last node in the chain for further connection.
+  makeupGain
+}
+
+/// Set up the AnalyserNode for VAD speech detection.
+/// Creates an FFT-based analyser that feeds into the VAD
+/// threshold comparison logic in the update loop.
+let setupAnalyser = (state: pipelineState, ctx: {..}, sourceNode: {..}): unit => {
+  let analyser = ctx["createAnalyser"]()
+  // 256-point FFT gives 128 frequency bins — sufficient for
+  // speech detection without excessive CPU usage.
+  analyser["fftSize"] = 256
+  // Smoothing constant: 0.8 provides stable readings without
+  // excessive lag. Higher = smoother but slower to respond.
+  analyser["smoothingTimeConstant"] = 0.8
+  sourceNode["connect"](analyser)
+  state.analyser = Some(analyser)
+}
+
+// ---------------------------------------------------------------------------
+// Comfort noise — pink noise generation
+// ---------------------------------------------------------------------------
+
+/// Generate a pink noise buffer for comfort noise injection.
+/// Pink noise (1/f spectrum) sounds more natural than white noise
+/// and closely matches the spectral profile of ambient room tone.
+///
+/// Algorithm: Voss-McCartney approximation using 3 random sources
+/// at different update rates, producing a reasonable 1/f spectrum.
+let generatePinkNoiseBuffer = (ctx: {..}): {..} => {
+  let sampleRate: int = ctx["sampleRate"]
+  let length = sampleRate * 2 // 2 seconds of noise, looped.
+  let buffer = ctx["createBuffer"](1, length, sampleRate)
+  let data: array<float> = %raw(`Array.from(buffer.getChannelData(0))`)
+
+  // Voss-McCartney pink noise approximation.
+  // Uses 3 octave bands summed together.
+  let _: unit = %raw(`(() => {
+    let b0 = 0, b1 = 0, b2 = 0;
+    const output = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99765 * b0 + white * 0.0990460;
+      b1 = 0.96300 * b1 + white * 0.2965164;
+      b2 = 0.57000 * b2 + white * 1.0526913;
+      output[i] = (b0 + b1 + b2 + white * 0.1848) * 0.05;
+    }
+  })()`)
+  ignore(data)
+
+  buffer
+}
+
+/// Start comfort noise playback. Creates a looping pink noise source
+/// at a very low level (-50dB) connected to the audio destination.
+/// Only active when in a voice room and VAD detects silence.
+let startComfortNoise = (state: pipelineState): unit => {
+  switch state.audioContext {
+  | Some(ctx) =>
+    // Create gain node for comfort noise level control.
+    let gain = ctx["createGain"]()
+    // -50dB = 10^(-50/20) ≈ 0.00316
+    let linearGain = %raw(`Math.pow(10, -50 / 20)`)
+    gain["gain"]["setValueAtTime"](linearGain, ctx["currentTime"])
+
+    // Create the pink noise buffer source.
+    let buffer = generatePinkNoiseBuffer(ctx)
+    let source = ctx["createBufferSource"]()
+    source["buffer"] = buffer
+    source["loop"] = true
+
+    // Wire: source -> gain -> destination
+    source["connect"](gain)
+    gain["connect"](ctx["destination"])
+    source["start"]()
+
+    state.comfortNoiseGain = Some(gain)
+    state.comfortNoiseSource = Some(source)
+
+    console["log"]("[Burble:Pipeline] Comfort noise started")
+  | None => ()
+  }
+}
+
+/// Stop comfort noise playback and release audio nodes.
+let stopComfortNoise = (state: pipelineState): unit => {
+  switch state.comfortNoiseSource {
+  | Some(source) =>
+    let _: unit = %raw(`(() => { try { source.stop(); } catch(e) {} })()`)
+    ignore(source)
+  | None => ()
+  }
+  state.comfortNoiseSource = None
+  state.comfortNoiseGain = None
+  console["log"]("[Burble:Pipeline] Comfort noise stopped")
+}
+
+// ---------------------------------------------------------------------------
+// VAD — Voice Activity Detection with smoothing
+// ---------------------------------------------------------------------------
+
+/// Compute the current RMS level in dB from the analyser node.
+/// Returns a value in dB where 0dB is full scale and negative
+/// values indicate quieter signals.
+let computeVadLevelDb = (state: pipelineState): float => {
+  switch state.analyser {
+  | Some(analyser) =>
+    // Read frequency data and compute RMS.
+    let rms: float = %raw(`(() => {
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const normalized = data[i] / 255.0;
+        sum += normalized * normalized;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      // Convert to dB. Clamp to avoid -Infinity.
+      return rms > 0 ? 20 * Math.log10(rms) : -100;
+    })()`)
+    rms
+  | None => -100.0
+  }
+}
+
+/// Update VAD state with smoothing. Called on every animation frame.
+/// When speech drops below threshold, a hold timer keeps the "speaking"
+/// state for vadHoldTimeMs to prevent rapid on/off cycling.
+let updateVad = (state: pipelineState): unit => {
+  if !state.vadEnabled {
+    // VAD disabled — PTT mode handles speech gating.
+    ()
+  } else {
+    let levelDb = computeVadLevelDb(state)
+    let aboveThreshold = levelDb > state.vadThreshold
+
+    if aboveThreshold {
+      // Speech detected — clear any hold timer and mark as speaking.
+      switch state.vadHoldTimer {
+      | Some(timerId) =>
+        clearTimeout(timerId)
+        state.vadHoldTimer = None
+      | None => ()
+      }
+      state.vadHolding = false
+
+      if !state.vadSpeaking {
+        state.vadSpeaking = true
+        // Notify engine of speech start.
+        switch state.engine {
+        | Some(eng) =>
+          switch eng.channel {
+          | Some(ch) =>
+            PhoenixSocket.push(ch, "speaking_state", {"state": "speaking"})
+          | None => ()
+          }
+        | None => ()
+        }
+      }
+    } else if state.vadSpeaking && !state.vadHolding {
+      // Speech dropped below threshold — start hold timer.
+      state.vadHolding = true
+      let timerId = setTimeout(() => {
+        state.vadSpeaking = false
+        state.vadHolding = false
+        state.vadHoldTimer = None
+        // Notify engine of speech end.
+        switch state.engine {
+        | Some(eng) =>
+          switch eng.channel {
+          | Some(ch) =>
+            PhoenixSocket.push(ch, "speaking_state", {"state": "silent"})
+          | None => ()
+          }
+        | None => ()
+        }
+
+        // If comfort noise is enabled, update its state.
+        if state.comfortNoiseEnabled {
+          switch state.comfortNoiseGain {
+          | Some(gain) =>
+            // Fade comfort noise in when speech ends.
+            switch state.audioContext {
+            | Some(ctx) =>
+              let linearGain: float = %raw(`Math.pow(10, -50 / 20)`)
+              gain["gain"]["setTargetAtTime"](linearGain, ctx["currentTime"], 0.1)
+            | None => ()
+            }
+          | None =>
+            // Start comfort noise if not already running.
+            startComfortNoise(state)
+          }
+        }
+      }, vadHoldTimeMs)
+      state.vadHoldTimer = Some(timerId)
+    }
+
+    // When speaking and comfort noise is active, fade it out.
+    if state.vadSpeaking && state.comfortNoiseEnabled {
+      switch (state.comfortNoiseGain, state.audioContext) {
+      | (Some(gain), Some(ctx)) =>
+        gain["gain"]["setTargetAtTime"](0.0, ctx["currentTime"], 0.05)
+      | _ => ()
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PTT — Push-to-Talk key handling
+// ---------------------------------------------------------------------------
+
+/// Internal keydown handler for PTT. When the configured key is pressed,
+/// enables audio transmission and shows the TX indicator.
+let handlePttKeyDown = (state: pipelineState, event: {..}): unit => {
+  let code: string = event["code"]
+  if state.pttEnabled && code == state.pttKey && !state.pttActive {
+    state.pttActive = true
+
+    // Enable local audio tracks via the engine.
+    switch state.engine {
+    | Some(eng) =>
+      switch eng.localStream {
+      | Some(stream) =>
+        let tracks: array<{..}> = stream["getAudioTracks"]()
+        tracks->Array.forEach(track => {
+          track["enabled"] = VoiceEngine.getVoiceState(eng) == Active
+        })
+      | None => ()
+      }
+    | None => ()
+    }
+  }
+}
+
+/// Internal keyup handler for PTT. When the configured key is released,
+/// disables audio transmission.
+let handlePttKeyUp = (state: pipelineState, event: {..}): unit => {
+  let code: string = event["code"]
+  if state.pttEnabled && code == state.pttKey && state.pttActive {
+    state.pttActive = false
+
+    // Disable local audio tracks via the engine.
+    switch state.engine {
+    | Some(eng) =>
+      switch eng.localStream {
+      | Some(stream) =>
+        let tracks: array<{..}> = stream["getAudioTracks"]()
+        tracks->Array.forEach(track => {
+          track["enabled"] = false
+        })
+      | None => ()
+      }
+    | None => ()
+    }
+  }
+}
+
+/// Register PTT keyboard event listeners on the window.
+let setupPttListeners = (state: pipelineState): unit => {
+  addKeyDownListener(event => handlePttKeyDown(state, event))
+  addKeyUpListener(event => handlePttKeyUp(state, event))
+}
+
+// ---------------------------------------------------------------------------
+// Noise suppression — spectral gating via gain attenuation
+// ---------------------------------------------------------------------------
+
+/// Apply the current noise suppression level to the audio graph.
+/// Uses a gain node that attenuates the signal when the level
+/// falls below the suppression threshold. Higher suppression levels
+/// use a more aggressive threshold.
+///
+/// Note: A full spectral gating AudioWorklet would provide better
+/// quality, but gain-based gating is sufficient for the initial
+/// implementation and avoids AudioWorklet cross-origin constraints.
+let applyNoiseSuppression = (state: pipelineState): unit => {
+  let threshold = suppressionThreshold(state.noiseSuppression)
+  ignore(threshold)
+
+  // Log the current suppression setting.
+  let levelStr = switch state.noiseSuppression {
+  | Off => "off"
+  | Low => "low"
+  | Medium => "medium"
+  | High => "high"
+  }
+  console["log"](`[Burble:Pipeline] Noise suppression: ${levelStr}`)
+
+  // Sync to engine if available.
+  switch state.engine {
+  | Some(eng) =>
+    let enabled = state.noiseSuppression != Off
+    VoiceEngine.setNoiseSuppression(eng, enabled)
+  | None => ()
+  }
+}
+
+/// Cycle through noise suppression levels: Off -> Low -> Medium -> High -> Off.
+let cycleNoiseSuppression = (state: pipelineState): noiseSuppression => {
+  state.noiseSuppression = switch state.noiseSuppression {
+  | Off => Low
+  | Low => Medium
+  | Medium => High
+  | High => Off
+  }
+  applyNoiseSuppression(state)
+  state.noiseSuppression
+}
+
+// ---------------------------------------------------------------------------
+// Engine attachment — wire pipeline to VoiceEngine audio graph
+// ---------------------------------------------------------------------------
+
+/// Attach the pipeline to a VoiceEngine instance. This sets up
+/// the full audio processing chain:
+///   source -> analyser (for VAD)
+///   source -> compressor (AGC) -> makeup gain -> destination
+///
+/// Must be called after VoiceEngine.connect() has established
+/// the local audio stream.
+let attachToEngine = (state: pipelineState, engine: VoiceEngine.t): unit => {
+  state.engine = Some(engine)
+
+  // Use the engine's existing AudioContext if available,
+  // otherwise create a new one.
+  let ctx = switch engine.audioContext {
+  | Some(ctx) => ctx
+  | None =>
+    let ctx = makeAudioContext()
+    ctx
+  }
+  state.audioContext = Some(ctx)
+
+  // Create a source node from the engine's local stream.
+  switch engine.localStream {
+  | Some(stream) =>
+    let source = ctx["createMediaStreamSource"](stream)
+
+    // Set up the VAD analyser (taps the source without modifying it).
+    setupAnalyser(state, ctx, source)
+
+    // Set up AGC via DynamicsCompressor (always on).
+    if state.agcEnabled {
+      let _lastNode = setupAgc(state, ctx, source)
+      ignore(_lastNode)
+    }
+
+    // Set up PTT key listeners.
+    setupPttListeners(state)
+
+    // Start comfort noise if enabled and in a voice room.
+    if state.comfortNoiseEnabled {
+      startComfortNoise(state)
+    }
+
+    console["log"]("[Burble:Pipeline] Audio pipeline attached to engine")
+  | None =>
+    console["log"]("[Burble:Pipeline] No local stream — pipeline deferred")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DOM construction helpers
+// ---------------------------------------------------------------------------
+
+/// Create a styled button matching the VoiceControls.res pattern.
+let makeButton = (
+  ~text: string,
+  ~className: string,
+  ~title: string,
+  ~onClick: unit => unit,
+): {..} => {
+  let btn = createElement("button")
+  btn["textContent"] = text
+  btn["className"] = `burble-ap-btn ${className}`
+  btn["title"] = title
+  btn["onclick"] = (_: {..}) => onClick()
+  btn["style"]["cssText"] = `
+    background: #2a2a2a;
+    color: #e0e0e0;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  `
+  btn
+}
+
+/// Create a text label span for inline display.
+let makeLabel = (text: string): {..} => {
+  let span = createElement("span")
+  span["textContent"] = text
+  span["style"]["cssText"] = `
+    color: #ccc;
+    font-size: 13px;
+    vertical-align: middle;
+  `
+  span
+}
+
+/// Create a separator element between control groups.
+let makeSeparator = (): {..} => {
+  let sep = createElement("span")
+  sep["className"] = "burble-ap-separator"
+  sep["style"]["cssText"] = `
+    display: inline-block;
+    width: 1px;
+    height: 20px;
+    background: #444;
+    margin: 0 8px;
+    vertical-align: middle;
+  `
+  sep
+}
+
+/// Create a small badge indicator (e.g., "TX", "VAD", "AGC").
+let makeBadge = (~text: string, ~color: string, ~bgColor: string): {..} => {
+  let badge = createElement("span")
+  badge["textContent"] = text
+  badge["style"]["cssText"] = `
+    display: none;
+    background: ${bgColor};
+    color: ${color};
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: 4px;
+    vertical-align: middle;
+  `
+  badge
+}
+
+/// Create the AGC gain indicator — a small bar showing current gain reduction.
+let makeGainIndicator = (): {..} => {
+  let container = createElement("div")
+  container["className"] = "burble-ap-gain-indicator"
+  container["style"]["cssText"] = `
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+  `
+
+  let label = createElement("span")
+  label["textContent"] = "AGC"
+  label["style"]["cssText"] = `
+    color: #88cc88;
+    font-size: 10px;
+    font-weight: bold;
+  `
+  container["appendChild"](label)
+
+  let bar = createElement("div")
+  bar["style"]["cssText"] = `
+    width: 30px;
+    height: 4px;
+    background: #333;
+    border-radius: 2px;
+    overflow: hidden;
+  `
+  let fill = createElement("div")
+  fill["setAttribute"]("data-role", "agc-fill")
+  fill["style"]["cssText"] = `
+    width: 50%;
+    height: 100%;
+    background: #88cc88;
+    border-radius: 2px;
+    transition: width 0.1s linear;
+  `
+  bar["appendChild"](fill)
+  container["appendChild"](bar)
+
+  container
+}
+
+// ---------------------------------------------------------------------------
+// Noise suppression label helper
+// ---------------------------------------------------------------------------
+
+/// Display label for the current noise suppression level.
+let noiseSuppressionLabel = (level: noiseSuppression): string =>
+  switch level {
+  | Off => "NS: Off"
+  | Low => "NS: Low"
+  | Medium => "NS: Med"
+  | High => "NS: High"
+  }
+
+// ---------------------------------------------------------------------------
+// Rendering — build the pipeline controls DOM
+// ---------------------------------------------------------------------------
+
+/// Render the audio pipeline controls panel and return the root DOM element.
+/// The panel displays inline controls for PTT/VAD toggle, noise suppression,
+/// comfort noise, and AGC gain indicator. It self-updates via
+/// requestAnimationFrame.
+///
+/// Call this once and append the returned element to your page container.
+/// Subsequent updates are handled by the internal update loop.
+let render = (state: pipelineState, engine: VoiceEngine.t): {..} => {
+  state.engine = Some(engine)
+
+  // ── Root container ──
+  let panel = createElement("div")
+  panel["className"] = "burble-audio-pipeline"
+  panel["style"]["cssText"] = `
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    background: #1e1e1e;
+    border-top: 1px solid #333;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    user-select: none;
+  `
+
+  // ── PTT / VAD toggle button ──
+  // Switches between Push-to-Talk and Voice Activity Detection modes.
+  let modeBtn = makeButton(
+    ~text=if state.pttEnabled { "PTT" } else { "VAD" },
+    ~className="burble-ap-mode",
+    ~title="Toggle between Push-to-Talk and Voice Activity Detection",
+    ~onClick=() => {
+      state.pttEnabled = !state.pttEnabled
+      state.vadEnabled = !state.pttEnabled
+
+      // Sync input mode to the engine.
+      switch state.engine {
+      | Some(eng) =>
+        let mode = if state.pttEnabled {
+          VoiceEngine.PushToTalk
+        } else {
+          VoiceEngine.VoiceActivity
+        }
+        VoiceEngine.setInputMode(eng, mode)
+      | None => ()
+      }
+    },
+  )
+  modeBtn["setAttribute"]("data-role", "mode-btn")
+  panel["appendChild"](modeBtn)
+
+  // ── TX badge (visible during PTT transmission) ──
+  let txBadge = makeBadge(~text="TX", ~color="white", ~bgColor="#ff4444")
+  txBadge["setAttribute"]("data-role", "tx-badge")
+  panel["appendChild"](txBadge)
+
+  // ── VAD speaking badge (visible during VAD speech detection) ──
+  let vadBadge = makeBadge(~text="VOICE", ~color="white", ~bgColor="#44aa44")
+  vadBadge["setAttribute"]("data-role", "vad-badge")
+  panel["appendChild"](vadBadge)
+
+  panel["appendChild"](makeSeparator())
+
+  // ── Noise suppression cycle button ──
+  let nsBtn = makeButton(
+    ~text=noiseSuppressionLabel(state.noiseSuppression),
+    ~className="burble-ap-ns",
+    ~title="Cycle noise suppression: Off -> Low -> Medium -> High",
+    ~onClick=() => {
+      let _level = cycleNoiseSuppression(state)
+    },
+  )
+  nsBtn["setAttribute"]("data-role", "ns-btn")
+  panel["appendChild"](nsBtn)
+
+  // ── Noise suppression active indicator ──
+  let nsIndicator = makeBadge(~text="NS", ~color="white", ~bgColor="#4488cc")
+  nsIndicator["setAttribute"]("data-role", "ns-indicator")
+  panel["appendChild"](nsIndicator)
+
+  panel["appendChild"](makeSeparator())
+
+  // ── Comfort noise toggle button ──
+  let cnBtn = makeButton(
+    ~text=if state.comfortNoiseEnabled { "CN: On" } else { "CN: Off" },
+    ~className="burble-ap-cn",
+    ~title="Toggle comfort noise (fills silence with subtle ambient noise)",
+    ~onClick=() => {
+      state.comfortNoiseEnabled = !state.comfortNoiseEnabled
+      if state.comfortNoiseEnabled {
+        VoiceEngine.setComfortNoise(
+          state.engine->Option.getUnsafe,
+          true,
+        )
+        // Start comfort noise if we are currently silent.
+        if !state.vadSpeaking {
+          startComfortNoise(state)
+        }
+      } else {
+        VoiceEngine.setComfortNoise(
+          state.engine->Option.getUnsafe,
+          false,
+        )
+        stopComfortNoise(state)
+      }
+    },
+  )
+  cnBtn["setAttribute"]("data-role", "cn-btn")
+  panel["appendChild"](cnBtn)
+
+  panel["appendChild"](makeSeparator())
+
+  // ── AGC gain indicator (always visible since AGC is always on) ──
+  let gainIndicator = makeGainIndicator()
+  gainIndicator["setAttribute"]("data-role", "gain-indicator")
+  panel["appendChild"](gainIndicator)
+
+  // ── PTT key binding label ──
+  let pttKeyLabel = makeLabel(`PTT Key: ${state.pttKey}`)
+  pttKeyLabel["setAttribute"]("data-role", "ptt-key-label")
+  pttKeyLabel["style"]["display"] = if state.pttEnabled { "inline" } else { "none" }
+  panel["appendChild"](pttKeyLabel)
+
+  state.rootElement = Some(panel)
+
+  // ── Start the update loop ──
+  startUpdateLoop(state)
+
+  panel
+}
+
+/// Start the requestAnimationFrame update loop that syncs DOM elements
+/// with the current pipeline state. Updates VAD, badges, and gain indicator.
+and startUpdateLoop = (state: pipelineState): unit => {
+  let rec loop = (_timestamp: float): unit => {
+    // Run VAD detection on every frame.
+    updateVad(state)
+
+    // Update DOM elements from current state.
+    switch state.rootElement {
+    | Some(root) =>
+      // ── Update mode button label ──
+      let modeBtns: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="mode-btn"]'))`)
+      modeBtns->Array.forEach(btn => {
+        let text = if state.pttEnabled { "PTT" } else { "VAD" }
+        btn["textContent"] = text
+        // Highlight active mode.
+        if state.pttEnabled {
+          btn["style"]["background"] = "#2a3a4a"
+          btn["style"]["borderColor"] = "#4488cc"
+        } else {
+          btn["style"]["background"] = "#2a4a2a"
+          btn["style"]["borderColor"] = "#44aa44"
+        }
+      })
+
+      // ── Update TX badge visibility (PTT mode, key held) ──
+      let txBadges: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="tx-badge"]'))`)
+      txBadges->Array.forEach(badge => {
+        badge["style"]["display"] = if state.pttEnabled && state.pttActive {
+          "inline-block"
+        } else {
+          "none"
+        }
+      })
+
+      // ── Update VAD badge visibility (VAD mode, speech detected) ──
+      let vadBadges: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="vad-badge"]'))`)
+      vadBadges->Array.forEach(badge => {
+        badge["style"]["display"] = if state.vadEnabled && state.vadSpeaking {
+          "inline-block"
+        } else {
+          "none"
+        }
+      })
+
+      // ── Update noise suppression button label ──
+      let nsBtns: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="ns-btn"]'))`)
+      nsBtns->Array.forEach(btn => {
+        btn["textContent"] = noiseSuppressionLabel(state.noiseSuppression)
+      })
+
+      // ── Update noise suppression indicator ──
+      let nsInds: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="ns-indicator"]'))`)
+      nsInds->Array.forEach(ind => {
+        ind["style"]["display"] = if state.noiseSuppression != Off {
+          "inline-block"
+        } else {
+          "none"
+        }
+      })
+
+      // ── Update comfort noise button label ──
+      let cnBtns: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="cn-btn"]'))`)
+      cnBtns->Array.forEach(btn => {
+        btn["textContent"] = if state.comfortNoiseEnabled { "CN: On" } else { "CN: Off" }
+        if state.comfortNoiseEnabled {
+          btn["style"]["background"] = "#2a3a2a"
+          btn["style"]["borderColor"] = "#448844"
+        } else {
+          btn["style"]["background"] = "#2a2a2a"
+          btn["style"]["borderColor"] = "#444"
+        }
+      })
+
+      // ── Update AGC gain indicator ──
+      let gainFills: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="agc-fill"]'))`)
+      gainFills->Array.forEach(fill => {
+        // Read gain reduction from compressor if available.
+        let reduction = switch state.compressorNode {
+        | Some(comp) =>
+          let r: float = comp["reduction"]
+          // reduction is negative dB; normalise to 0-100%.
+          Math.min(100.0, Math.abs(r) *. 3.33)
+        | None => 0.0
+        }
+        fill["style"]["width"] = `${Float.toString(reduction)}%`
+      })
+
+      // ── Update PTT key label visibility ──
+      let pttLabels: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="ptt-key-label"]'))`)
+      pttLabels->Array.forEach(label => {
+        label["style"]["display"] = if state.pttEnabled { "inline" } else { "none" }
+        label["textContent"] = `PTT Key: ${state.pttKey}`
+      })
+    | None => ()
+    }
+
+    // Schedule next frame.
+    let id = requestAnimationFrame(loop)
+    state.rafId = Some(id)
+  }
+
+  let id = requestAnimationFrame(loop)
+  state.rafId = Some(id)
+}
+
+// ---------------------------------------------------------------------------
+// Configuration — runtime parameter changes
+// ---------------------------------------------------------------------------
+
+/// Set the PTT key binding. Uses KeyboardEvent.code values.
+/// Common values: "Space" (default), "KeyV", "KeyT", "KeyZ".
+let setPttKey = (state: pipelineState, keyCode: string): unit => {
+  state.pttKey = keyCode
+  // Also update the engine's PTT key.
+  switch state.engine {
+  | Some(eng) => VoiceEngine.setPttKeyCode(eng, keyCode)
+  | None => ()
+  }
+}
+
+/// Set the VAD threshold in dB. Typical range: -60dB to -20dB.
+/// Lower values (e.g., -60dB) are more sensitive, higher values
+/// (e.g., -20dB) require louder speech.
+let setVadThreshold = (state: pipelineState, thresholdDb: float): unit => {
+  state.vadThreshold = thresholdDb
+  // Sync to engine.
+  switch state.engine {
+  | Some(eng) =>
+    // Convert dB to linear for the engine's VAD threshold (0.0-1.0).
+    let linear: float = %raw(`Math.pow(10, thresholdDb / 20)`)
+    VoiceEngine.setVadThreshold(eng, linear)
+  | None => ()
+  }
+}
+
+/// Set the noise suppression level directly (without cycling).
+let setNoiseSuppression = (state: pipelineState, level: noiseSuppression): unit => {
+  state.noiseSuppression = level
+  applyNoiseSuppression(state)
+}
+
+/// Toggle comfort noise on or off.
+let toggleComfortNoise = (state: pipelineState): bool => {
+  state.comfortNoiseEnabled = !state.comfortNoiseEnabled
+  if state.comfortNoiseEnabled {
+    if !state.vadSpeaking {
+      startComfortNoise(state)
+    }
+  } else {
+    stopComfortNoise(state)
+  }
+  state.comfortNoiseEnabled
+}
+
+// ---------------------------------------------------------------------------
+// Cleanup
+// ---------------------------------------------------------------------------
+
+/// Stop the update loop, release audio nodes, and remove the panel from
+/// the DOM. Call this when the pipeline controls are being unmounted.
+let destroy = (state: pipelineState): unit => {
+  // Cancel the animation frame loop.
+  switch state.rafId {
+  | Some(id) => cancelAnimationFrame(id)
+  | None => ()
+  }
+  state.rafId = None
+
+  // Cancel any pending VAD hold timer.
+  switch state.vadHoldTimer {
+  | Some(timerId) => clearTimeout(timerId)
+  | None => ()
+  }
+  state.vadHoldTimer = None
+
+  // Stop comfort noise.
+  stopComfortNoise(state)
+
+  // Disconnect audio nodes.
+  switch state.compressorNode {
+  | Some(comp) =>
+    let _: unit = %raw(`(() => { try { comp.disconnect(); } catch(e) {} })()`)
+    ignore(comp)
+  | None => ()
+  }
+  switch state.gainNode {
+  | Some(gain) =>
+    let _: unit = %raw(`(() => { try { gain.disconnect(); } catch(e) {} })()`)
+    ignore(gain)
+  | None => ()
+  }
+  state.compressorNode = None
+  state.gainNode = None
+  state.analyser = None
+  state.audioContext = None
+
+  // Remove the root element from the DOM.
+  switch state.rootElement {
+  | Some(root) =>
+    let parent: Nullable.t<{..}> = root["parentNode"]
+    let isNull: bool = %raw(`parent === null`)
+    if !isNull {
+      let p: {..} = %raw(`parent`)
+      p["removeChild"](root)
+    }
+  | None => ()
+  }
+  state.rootElement = None
+  state.engine = None
+}

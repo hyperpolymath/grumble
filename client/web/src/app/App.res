@@ -18,9 +18,16 @@ type t = {
   auth: AuthState.t,
   voiceEngine: VoiceEngine.t,
   voiceControls: VoiceControls.t,
+  audioPipeline: AudioPipeline.pipelineState,
   mutable currentRoute: Routes.route,
   mutable currentRoom: option<RoomState.t>,
   mutable serverList: array<serverInfo>,
+  /// The setup wizard instance (shown on first visit).
+  mutable setupWizard: option<SetupWizard.t>,
+  /// The self-test panel instance (opened from settings).
+  mutable selfTestPanel: option<SelfTestPanel.t>,
+  /// Whether the self-test panel is currently visible.
+  mutable selfTestVisible: bool,
 }
 
 /// Server info for the server list sidebar.
@@ -32,20 +39,46 @@ and serverInfo = {
   memberCount: int,
 }
 
+/// External binding for localStorage access.
+@val external localStorage: {..} = "localStorage"
+
+/// External binding for document.body access.
+@val external documentBody: {..} = "document.body"
+
 /// Create the application state.
+/// On creation, checks localStorage for setup wizard completion.
+/// If the wizard hasn't been completed, it is shown as a modal overlay.
 let make = (): t => {
   let initialRoute = Routes.parse(
     %raw(`window.location.pathname`)
   )
 
-  {
+  let app = {
     auth: AuthState.make(),
     voiceEngine: VoiceEngine.make(),
     voiceControls: VoiceControls.make(),
+    audioPipeline: AudioPipeline.make(),
     currentRoute: initialRoute,
     currentRoom: None,
     serverList: [],
+    setupWizard: None,
+    selfTestPanel: None,
+    selfTestVisible: false,
   }
+
+  // ── Setup wizard check ──
+  // If the user hasn't completed the setup wizard, show it on app load.
+  if !SetupWizard.isSetupComplete() {
+    let wizard = SetupWizard.make()
+    SetupWizard.onComplete(wizard, () => {
+      app.setupWizard = None
+    })
+    let overlay = SetupWizard.render(wizard)
+    documentBody["appendChild"](overlay)
+    app.setupWizard = Some(wizard)
+  }
+
+  app
 }
 
 /// Navigate to a route. Handles auth guards via cadre-router integration.
@@ -115,4 +148,75 @@ let toggleDeafen = (app: t): unit => {
   let newState = VoiceEngine.toggleDeafen(app.voiceEngine)
   ignore(newState)
   VoiceControls.syncFromEngine(app.voiceControls, app.voiceEngine)
+}
+
+// ---------------------------------------------------------------------------
+// Self-test panel — accessible from settings
+// ---------------------------------------------------------------------------
+
+/// Show the self-test diagnostics panel. Creates a new panel instance
+/// and appends it to the document body as a modal.
+let showSelfTestPanel = (app: t): unit => {
+  // Close existing panel if open.
+  switch app.selfTestPanel {
+  | Some(panel) => SelfTestPanel.destroy(panel)
+  | None => ()
+  }
+
+  let panel = SelfTestPanel.make()
+  let element = SelfTestPanel.render(panel)
+
+  // Wrap in a modal overlay for consistent presentation.
+  let overlay: {..} = %raw(`(() => {
+    const el = document.createElement('div');
+    el.className = 'burble-selftest-overlay';
+    el.style.cssText = 'position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 9000;';
+    return el;
+  })()`)
+
+  // Close on backdrop click.
+  overlay["onclick"] = (event: {..}) => {
+    let target: {..} = event["target"]
+    let isSelf: bool = %raw(`target === overlay`)
+    if isSelf {
+      hideSelfTestPanel(app)
+    }
+  }
+
+  overlay["appendChild"](element)
+  documentBody["appendChild"](overlay)
+  app.selfTestPanel = Some(panel)
+  app.selfTestVisible = true
+}
+
+/// Hide and destroy the self-test diagnostics panel.
+and hideSelfTestPanel = (app: t): unit => {
+  switch app.selfTestPanel {
+  | Some(panel) => SelfTestPanel.destroy(panel)
+  | None => ()
+  }
+  // Remove the overlay element.
+  let _: unit = %raw(`(() => {
+    const overlay = document.querySelector('.burble-selftest-overlay');
+    if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  })()`)
+  app.selfTestPanel = None
+  app.selfTestVisible = false
+}
+
+/// Re-open the setup wizard (accessible from settings even after completion).
+let showSetupWizard = (app: t): unit => {
+  // Destroy any existing wizard first.
+  switch app.setupWizard {
+  | Some(wiz) => SetupWizard.destroy(wiz)
+  | None => ()
+  }
+
+  let wizard = SetupWizard.make()
+  SetupWizard.onComplete(wizard, () => {
+    app.setupWizard = None
+  })
+  let overlay = SetupWizard.render(wizard)
+  documentBody["appendChild"](overlay)
+  app.setupWizard = Some(wizard)
 }

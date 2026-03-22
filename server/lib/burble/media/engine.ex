@@ -298,9 +298,34 @@ defmodule Burble.Media.Engine do
   end
 
   @impl true
-  def handle_call({:signal, _room_id, _peer_id, _signal}, _from, state) do
-    # TODO: Forward to Membrane RTC Engine for WebRTC negotiation
-    {:reply, {:ok, :forwarded}, state}
+  def handle_call({:signal, room_id, peer_id, signal}, _from, state) do
+    case Map.get(state.sessions, room_id) do
+      nil ->
+        {:reply, {:error, :no_session}, state}
+
+      session ->
+        if Map.has_key?(session.peers, peer_id) do
+          # Route signaling to the Peer GenServer which owns the
+          # ExWebRTC PeerConnection for this participant.
+          result =
+            case signal do
+              %{"type" => "answer", "sdp" => sdp} ->
+                Burble.Media.Peer.apply_sdp_answer(peer_id, sdp)
+
+              %{"candidate" => _} ->
+                candidate_json = Jason.encode!(signal)
+                Burble.Media.Peer.add_ice_candidate(peer_id, candidate_json)
+
+              _ ->
+                Logger.warning("[Media] Unknown signal type from #{peer_id}: #{inspect(signal)}")
+                {:error, :unknown_signal}
+            end
+
+          {:reply, {:ok, result}, state}
+        else
+          {:reply, {:error, :peer_not_found}, state}
+        end
+    end
   end
 
   @impl true

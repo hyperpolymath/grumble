@@ -73,6 +73,21 @@ All MUST and SHOULD features are implemented. See ROADMAP below for COULD items.
 - [x] PanLLVoice extension (workspace huddles, PanelBus events)
 - [x] BurbleSpatial extension (3D positional audio)
 
+### Security (P1 — done)
+- [x] E2EE via Insertable Streams (E2EE.res — X25519, AES-256-GCM, frame ratcheting)
+- [x] Key rotation scheduler (KeyRotation GenServer — 20s interval, PubSub lifecycle)
+- [x] mTLS for server-to-server (mTLS module — certificate generation, peer verification)
+- [x] Rate limiting on auth endpoints (RateLimiter plug — ETS token bucket, 3 tiers)
+- [x] Media Engine signal dispatch (routes SDP/ICE to Peer GenServers)
+
+### Setup & Diagnostics (P0 — done)
+- [x] Self-test: 16 tests, 3 modes (quick/voice/full), HTTP API
+- [x] SelfTestPanel.res: card grid, mode selector, latency colours, progress spinner
+- [x] SetupWizard.res: 7-step wizard (permissions, devices, mic test, speaker test, network test)
+- [x] Mic test: getUserMedia + AnalyserNode + level meter with colour coding
+- [x] Speaker test: 440Hz oscillator with auto-stop
+- [x] Network test: self-test API fetch with latency measurement
+
 ---
 
 ## COULD — Roadmap (future sessions)
@@ -128,7 +143,6 @@ All MUST and SHOULD features are implemented. See ROADMAP below for COULD items.
 - [ ] Federation
 - [ ] Plugin ecosystem
 - [ ] Game presence APIs
-- [ ] Setup wizard
 
 ### Formal Verification
 - [ ] Idris2 proofs: Avow consent lifecycle

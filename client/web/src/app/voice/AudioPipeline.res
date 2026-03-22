@@ -812,19 +812,19 @@ let render = (state: pipelineState, engine: VoiceEngine.t): {..} => {
     ~onClick=() => {
       state.comfortNoiseEnabled = !state.comfortNoiseEnabled
       if state.comfortNoiseEnabled {
-        VoiceEngine.setComfortNoise(
-          state.engine->Option.getUnsafe,
-          true,
-        )
+        switch state.engine {
+        | Some(eng) => VoiceEngine.setComfortNoise(eng, true)
+        | None => ()
+        }
         // Start comfort noise if we are currently silent.
         if !state.vadSpeaking {
           startComfortNoise(state)
         }
       } else {
-        VoiceEngine.setComfortNoise(
-          state.engine->Option.getUnsafe,
-          false,
-        )
+        switch state.engine {
+        | Some(eng) => VoiceEngine.setComfortNoise(eng, false)
+        | None => ()
+        }
         stopComfortNoise(state)
       }
     },

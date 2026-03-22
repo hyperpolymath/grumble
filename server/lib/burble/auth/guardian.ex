@@ -37,7 +37,7 @@ defmodule Burble.Auth.Guardian do
 
       config :burble, Burble.Auth.Guardian,
         issuer: "burble",
-        secret_key: "generate-with-mix-phx-gen-secret",
+        secret_key: {MyApp.Config, :guardian_secret},
         ttl: {1, :hour}
 
   ## Usage

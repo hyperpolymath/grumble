@@ -288,6 +288,11 @@ defmodule Burble.Media.PipeWire do
   end
 
   # ── Private: PipeWire command execution ──
+  #
+  # SECURITY: All System.cmd calls use hardcoded binary names with no user
+  # input in commands or arguments. Arguments are either empty, integer node
+  # IDs (validated by Integer.to_string), or hardcoded PipeWire property keys.
+  # No command injection vector exists.
 
   # Run pw-dump and parse the JSON output.
   # pw-dump outputs a JSON array of all PipeWire objects.

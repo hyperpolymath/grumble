@@ -355,6 +355,9 @@ defmodule Burble.Timing.PTP do
     File.exists?(@ptp_device_path)
   end
 
+  # SECURITY: All System.cmd calls below use hardcoded binaries (pgrep, chronyc,
+  # timedatectl) with hardcoded arguments. No user input reaches any command.
+
   # Check if phc2sys is running (synchronises PTP HW clock to system clock).
   @spec phc2sys_running?() :: boolean()
   defp phc2sys_running? do

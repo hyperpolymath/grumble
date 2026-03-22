@@ -40,7 +40,7 @@ defmodule Burble.Bridges.Matrix do
       {:ok, pid} = Matrix.start_link(
         room_id: "my_room",
         homeserver: "https://matrix.example.com",
-        access_token: "syt_xxx...",
+        access_token: System.fetch_env!("MATRIX_ACCESS_TOKEN"),
         matrix_room_id: "!abc123:example.com"
       )
 

@@ -488,6 +488,9 @@ defmodule BurbleWeb.API.SetupController do
       generate_test_tone(tmp_file, 440, 1.0)
 
       # Play using pw-play with the specified device.
+      # SECURITY: pw-play is hardcoded. device_id is an integer (from PipeWire
+      # enumeration, validated by Integer.to_string). tmp_file is generated
+      # by System.tmp_dir!/0 + unique_integer — no user input in commands.
       args = [
         "--target", Integer.to_string(device_id),
         tmp_file

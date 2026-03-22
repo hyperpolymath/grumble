@@ -433,20 +433,13 @@ defmodule Burble.Media.LMDBPlayout do
     %{env: env, room_dir: room_dir}
   end
 
-  defp init_backend(:ets, room_id, _data_dir, _map_size) do
-    # Create an ETS table named after the room for the fallback backend.
-    # Using :set for O(1) key lookup (slot-based access).
-    table_name = ets_table_name(room_id)
+  defp init_backend(:ets, _room_id, _data_dir, _map_size) do
+    # Create an unnamed ETS table for the fallback backend.
+    # Uses table reference (tid) instead of atom name to avoid unbounded
+    # atom creation from room IDs. :set for O(1) slot-based access.
+    table = create_ets_table()
 
-    table =
-      :ets.new(table_name, [
-        :set,
-        :public,
-        read_concurrency: true,
-        write_concurrency: true
-      ])
-
-    %{table: table, table_name: table_name}
+    %{table: table}
   end
 
   # ── Private: Backend operations ──
@@ -595,10 +588,11 @@ defmodule Burble.Media.LMDBPlayout do
     {:via, Registry, {Burble.RoomRegistry, {:lmdb_playout, room_id}}}
   end
 
-  # Generate a unique ETS table name for a room's fallback buffer.
-  @spec ets_table_name(String.t()) :: atom()
-  defp ets_table_name(room_id) do
-    # Sanitise room_id to create a valid atom (room IDs are UUIDs).
-    String.to_atom("burble_playout_#{room_id}")
+  # Create an ETS table for a room's fallback buffer.
+  # Returns the table reference (tid), avoiding atom creation entirely.
+  # The table reference is stored in GenServer state, not looked up by name.
+  @spec create_ets_table() :: :ets.tid()
+  defp create_ets_table do
+    :ets.new(:burble_playout, [:ordered_set, :public])
   end
 end

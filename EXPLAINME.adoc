@@ -5,163 +5,128 @@
 
 The README makes claims. This file backs them up.
 
-If you're reading this, you probably saw "26,350x speedup" or "sub-microsecond
-PTP" and thought "yeah, right." Fair. Here's how each headline feature actually
-works, with file paths so you can verify.
+== "26,350x LZ4 Speedup"
 
-== "26,350x LZ4 Speedup" — How?
+[quote, README]
+____
+SIMD-accelerated audio processing via Zig NIFs
+____
 
-Not comparing apples to oranges. Same operation, same data, different execution
-path.
+Elixir runs on the BEAM VM — brilliant for concurrency, terrible for byte-level
+loops. The hot audio path (compression, echo cancel, FFT) runs as Zig
+https://www.erlang.org/doc/tutorial/nif.html[NIFs] compiled to SIMD-vectorised
+native code. The NIF boundary adds ~200ns overhead.
 
-**Elixir path:** `Enum.reduce/3` over a byte list, pattern matching each byte,
-building a compressed binary via `<<>>` concatenation. Elixir is a functional
-language on the BEAM VM — it's brilliant for concurrency, terrible for byte-level
-loops. 83ms for an audio frame.
+Same operation, same data. One path is an interpreted byte loop, the other is
+compiled SIMD. Run the benchmark yourself: `cd server && mix bench.coprocessor`
 
-**Zig path:** SIMD-vectorised LZ4 running as a NIF (Native Implemented Function)
-loaded into the BEAM via `erlang:load_nif/2`. Zig compiles to native machine code
-with auto-vectorisation. The NIF boundary adds ~200ns overhead. 3.1 microseconds
-total.
-
-**The code:**
-- Zig implementation: `ffi/zig/src/main.zig` (search for `lz4_compress`)
+- Zig implementation: `ffi/zig/src/main.zig`
 - NIF interface: `server/lib/burble/coprocessor.ex`
-- Benchmark: `server/lib/mix/tasks/bench_coprocessor.ex` — run it yourself with
-  `cd server && mix bench.coprocessor`
+- More on Zig: https://ziglang.org
 
-The speedup is real because we're comparing an interpreted byte loop against
-compiled SIMD. Same reason you wouldn't write a video codec in Python.
+== "Sub-Microsecond PTP"
 
-== "Sub-Microsecond PTP" — Not Marketing Nonsense
+[quote, README]
+____
+IEEE 1588 PTP (<1us) … Precision timing
+____
 
-IEEE 1588 Precision Time Protocol is a real standard used in financial trading,
-broadcast, and industrial control. We didn't invent it — we integrated it.
+https://en.wikipedia.org/wiki/Precision_Time_Protocol[IEEE 1588 PTP] is a real
+standard used in financial trading, broadcast, and industrial control. We probe
+the kernel for hardware PTP clocks, fall back through phc2sys and NTP, and export
+jitter as telemetry for the media plane to compensate clock drift.
 
-**What we actually do:**
+**Caveat:** Sub-microsecond requires a NIC with PTP hardware clock _and_ a PTP
+grandmaster on your network. On a regular cloud VM you get NTP-quality (~1ms).
+The code handles this honestly — it reports what it actually has.
 
-1. Probe the kernel for `/dev/ptp*` hardware clock devices (these exist on NICs
-   with PTP support — Intel i210, Mellanox, etc.)
-2. If no hardware PTP, check for `phc2sys` (a daemon that bridges PTP clocks to
-   the system clock)
-3. If no phc2sys, fall back to NTP (which gets you ~1ms, not microseconds)
-4. If nothing, use the system clock and warn
+- Implementation: `server/lib/burble/timing/ptp.ex` (594 lines)
 
-**The code:** `server/lib/burble/timing/ptp.ex` — 594 lines, fully documented.
+== "Fault Isolation Per Room"
 
-The GenServer samples clock offset every 5 seconds, maintains a 60-sample sliding
-window, and exports standard deviation as "jitter" via Erlang telemetry. The media
-plane uses this to compensate for clock drift between nodes when mixing audio
-streams.
+[quote, README]
+____
+Elixir/Erlang (OTP) — auth, sessions, rooms, presence, permissions
+____
 
-**The honest caveat:** You only get sub-microsecond if your NIC has a PTP hardware
-clock _and_ your network has a PTP grandmaster. On a regular cloud VM, you'll get
-NTP-quality timing (~1ms). The code handles this gracefully — it doesn't lie about
-what it has.
+Each room is a https://hexdocs.pm/elixir/GenServer.html[GenServer] under a
+DynamicSupervisor. If a room crashes, the supervisor handles it. Other rooms,
+auth, presence, signaling — unaffected. This isn't a framework feature we added;
+it's how https://elixir-lang.org[Elixir/OTP] works by design (built for telco
+switches needing 99.9999999% uptime).
 
-== "Fault Isolation Per Room" — OTP Isn't Magic, But It's Close
+**Caveat:** OTP isolates _process_ failures, not _infrastructure_ failures. If
+VeriSimDB goes down, all rooms lose their backing store.
 
-When we say "if a room crashes, everything else keeps running," this isn't a
-framework feature we added — it's how Erlang/OTP works by design. It was built
-for telephone switches in the 1980s that needed 99.9999999% uptime.
+- Supervision tree: `server/lib/burble/application.ex`
+- More on OTP: https://elixir-lang.org/getting-started/mix-otp/supervisor-and-application.html
 
-**How it works in Burble:**
+== "Self-Hostable — One Command"
 
-Each room is a `GenServer` process started under a `DynamicSupervisor`. If a room
-process crashes (bad packet, codec error, out of memory), the supervisor:
-
-1. Detects the crash via process monitoring
-2. Logs the failure
-3. Optionally restarts the room with a clean state
-4. Does NOT affect any other room, the auth system, presence, or signaling
-
-This is not a try/catch. Processes in Erlang are lightweight (2KB each), isolated
-(separate heaps), and communicate only via message passing. A crash in one process
-physically cannot corrupt another process's memory.
-
-**The code:** `server/lib/burble/application.ex` — look at the supervision tree.
-Each `Burble.Room` is a child of `Burble.RoomSupervisor` (a DynamicSupervisor).
-
-**The honest caveat:** If VeriSimDB goes down, all rooms lose their backing store.
-OTP isolates process failures, not infrastructure failures. We mitigate this with
-connection pooling and backoff retries in `Burble.Store`.
-
-== "Self-Hostable" — Actually One Command
-
-Not "one command after you install Docker, Node, PostgreSQL, Redis, and a reverse
-proxy." Actually one command:
-
-[source,bash]
-----
+[quote, README]
+____
 cd containers && podman-compose -f compose.toml up
-----
+____
 
-This starts three Chainguard-based containers:
-1. `burble-server` — Elixir release with embedded Zig NIFs
-2. `burble-web` — Static ReScript client served by Caddy
-3. `verisimdb` — Database (our own, not PostgreSQL)
+Three https://www.chainguard.dev[Chainguard]-based containers: server, web client
+(Caddy), VeriSimDB. Total ~120MB. No PostgreSQL, no Redis, no reverse proxy to
+configure.
 
-Total image size: ~120MB. Compare to Jitsi (~2GB) or Matrix Synapse (~500MB).
+- Deployment: `containers/compose.toml`
 
-**Why Chainguard:** Minimal attack surface. No shell in production images, no
-package manager, signed with Sigstore cosign, daily security updates.
+== "Mumble Bridge"
 
-**The code:** `containers/compose.toml`, `containers/Containerfile.server`
+Persistent TCP connection to Murmur speaking Mumble's protobuf protocol
+(port 64738). Voice (Opus), presence, and text relay bidirectionally. Channel
+mapping is configurable.
 
-== "Mumble Bridge" — Real Bidirectional, Not One-Way
+**What doesn't flow:** Mumble permissions (separate system), file transfers,
+positional audio (yet).
 
-The Mumble bridge maintains a persistent TCP connection to a Murmur server
-speaking Mumble's custom protobuf-over-TCP protocol on port 64738.
+- Implementation: `server/lib/burble/bridges/mumble.ex`
+- Mumble protocol: https://mumble-protocol.readthedocs.io
 
-**What actually flows:**
-- Voice packets (Opus codec) are relayed bidirectionally
-- User presence (join/leave/channel move) is synced
-- Text messages are forwarded
-- Channel mapping is configurable (Mumble channel → Burble room)
+== "SIP Bridge"
 
-**What doesn't flow:**
-- Mumble's permission system is separate from Burble's
-- File transfers aren't bridged
-- Mumble's positional audio isn't translated (yet)
+Subset of https://www.rfc-editor.org/rfc/rfc3261[RFC 3261]. Listens on UDP/TCP
+for INVITE/BYE/REGISTER, maps SIP sessions to rooms, transcodes G.711/G.722 ↔
+Opus via the Zig coprocessor.
 
-**The code:** `server/lib/burble/bridges/mumble.ex`
+**Caveat:** SIP is a 269-page RFC. We cover common call flows — registration,
+basic setup/teardown, DTMF. Complex call transfer scenarios may not work.
 
-== "SIP Bridge" — Yes, Real SIP
+- Implementation: `server/lib/burble/bridges/sip.ex` (1,400+ lines)
 
-`server/lib/burble/bridges/sip.ex` implements a subset of RFC 3261. SIP is a
-text-based protocol (think HTTP-for-phones). The bridge:
+== "Idris2 ABI Proofs"
 
-1. Listens for SIP INVITE/BYE/REGISTER on UDP and TCP
-2. Maps SIP sessions to Burble rooms
-3. Transcodes G.711/G.722 ↔ Opus via the Zig coprocessor
-4. Handles NAT with STUN/TURN
+The coprocessor FFI boundary is formally specified in
+https://www.idris-lang.org[Idris2] with dependent types proving memory layout
+correctness. This is the hyperpolymath standard ABI/FFI pattern — Idris2 defines
+the interface, Zig implements it, C headers bridge them.
 
-This means Burble rooms can receive calls from desk phones, PBXes, and SIP
-trunks. A conference room phone can join the same voice channel as browser
-users.
+- ABI definitions: `src/abi/Types.idr`, `src/abi/Foreign.idr`
+- More on this pattern: https://github.com/hyperpolymath/rsr-template-repo/blob/main/ABI-FFI-README.md
 
-**The honest caveat:** SIP is a nightmare protocol. Our implementation covers
-the common call flows but doesn't handle every edge case in the 269-page RFC.
-Registration, basic call setup/teardown, and DTMF work. Complex call transfer
-scenarios may not.
+== "VeriSimDB"
 
-**The code:** 1,400+ lines in `server/lib/burble/bridges/sip.ex`
+Our own formally verified database. Not PostgreSQL. Handles document and graph
+queries natively. Burble uses it as its sole data store via `Burble.Store`.
+
+- VeriSimDB: https://github.com/hyperpolymath/verisimdb
+- Burble client: `server/lib/burble/store.ex`
 
 == File Map
 
-For when you want to verify for yourself:
-
 [cols="1,2"]
 |===
-| Path | What's There
+| Path | Proves
 
-| `server/lib/burble/timing/ptp.ex` | PTP timing (594 lines)
-| `server/lib/burble/bridges/sip.ex` | SIP bridge (1,400+ lines)
-| `server/lib/burble/bridges/mumble.ex` | Mumble bridge
-| `server/lib/burble/coprocessor.ex` | Zig NIF interface
-| `server/lib/burble/application.ex` | OTP supervision tree
-| `server/lib/burble/store.ex` | VeriSimDB client
-| `ffi/zig/src/main.zig` | SIMD coprocessor (3,470 lines)
-| `server/lib/mix/tasks/bench_coprocessor.ex` | Run benchmarks yourself
-| `containers/compose.toml` | One-command deployment
+| `ffi/zig/src/main.zig` | The SIMD speedups are real (3,470 lines)
+| `server/lib/burble/timing/ptp.ex` | PTP actually works (594 lines)
+| `server/lib/burble/application.ex` | OTP supervision tree exists
+| `server/lib/burble/bridges/sip.ex` | SIP is implemented (1,400+ lines)
+| `server/lib/burble/bridges/mumble.ex` | Mumble bridge is implemented
+| `server/lib/mix/tasks/bench_coprocessor.ex` | Benchmarks are runnable
+| `containers/compose.toml` | One-command deployment is real
+| `src/abi/Types.idr` | Formal proofs exist
 |===

@@ -81,7 +81,7 @@ defmodule Burble.Auth do
     case Store.store_magic_link(token, email) do
       {:ok, _} ->
         # Send the magic link email.
-        base_url = Application.get_env(:burble, :base_url, "http://localhost:4000")
+        base_url = Application.get_env(:burble, :base_url, "http://localhost:6473")
         email_msg = Burble.Email.magic_link(email, token, base_url)
         Burble.Mailer.deliver(email_msg)
         {:ok, token}

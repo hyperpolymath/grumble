@@ -40,6 +40,10 @@ defmodule BurbleWeb.Router do
 
     # Invite acceptance (public — uses invite token, not auth token)
     post "/invites/:token/accept", InviteController, :accept
+
+    # Diagnostics (public — self-test before joining voice)
+    get "/diagnostics/self-test", DiagnosticsController, :self_test
+    get "/diagnostics/self-test/:mode", DiagnosticsController, :self_test
   end
 
   # Authenticated API routes (require valid JWT).

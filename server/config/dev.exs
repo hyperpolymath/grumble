@@ -9,7 +9,7 @@ config :burble, Burble.Store,
   timeout: 30_000
 
 config :burble, BurbleWeb.Endpoint,
-  http: [ip: {127, 0, 0, 1}, port: 4000],
+  http: [ip: {127, 0, 0, 1}, port: 6473],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
@@ -21,3 +21,7 @@ config :burble, dev_routes: true
 config :logger, :console, format: "[$level] $message\n"
 config :phoenix, :stacktrace_depth, 20
 config :phoenix, :plug_init_mode, :runtime
+
+# Use Swoosh local adapter in dev (no hackney needed)
+config :swoosh, :api_client, false
+config :burble, Burble.Mailer, adapter: Swoosh.Adapters.Local

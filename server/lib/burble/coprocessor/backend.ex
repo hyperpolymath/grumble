@@ -118,6 +118,71 @@ defmodule Burble.Coprocessor.Backend do
               filter_length :: pos_integer()
             ) :: [float()]
 
+  @doc """
+  Automatic gain control — normalise volume across speakers.
+
+  Adjusts sample amplitude so quiet speakers are boosted and loud speakers
+  are attenuated, targeting `target_rms_db` (typically -20 dB).
+  `attack_ms` and `release_ms` control how fast the gain adapts.
+
+  Returns `{normalised_pcm, new_state}` where state tracks the running gain.
+  """
+  @callback audio_agc(
+              pcm :: [float()],
+              target_rms_db :: float(),
+              attack_ms :: float(),
+              release_ms :: float(),
+              state :: map()
+            ) :: {[float()], map()}
+
+  @doc """
+  Generate comfort noise matching the spectral profile of recent silence.
+
+  When voice activity stops, total silence sounds "dead" and jarring.
+  This fills silence gaps with shaped noise at `level_db` below the
+  speech level, using the `noise_profile` (spectral envelope from last
+  detected noise floor).
+
+  Returns comfort noise PCM samples.
+  """
+  @callback audio_comfort_noise(
+              frame_length :: pos_integer(),
+              level_db :: float(),
+              noise_profile :: [float()]
+            ) :: [float()]
+
+  @doc """
+  Spectral voice activity detection — uses FFT-based features.
+
+  More accurate than energy-based VAD. Analyses spectral flatness,
+  spectral centroid, and harmonic structure to distinguish speech
+  from background noise (fans, typing, traffic).
+
+  Returns `{is_speech, confidence, updated_state}` where confidence
+  is 0.0-1.0 and state tracks running statistics.
+  """
+  @callback audio_spectral_vad(
+              pcm :: [float()],
+              sample_rate :: pos_integer(),
+              state :: map()
+            ) :: {boolean(), float(), map()}
+
+  @doc """
+  Apply perceptual weighting (A-weighting curve) to noise reduction.
+
+  Shapes the noise reduction profile to match human hearing sensitivity.
+  Frequencies we hear poorly (below 500 Hz, above 6 kHz) get less
+  aggressive reduction, preserving naturalness. Frequencies in the
+  speech band (1-4 kHz) get full reduction.
+
+  Applied in the frequency domain (operates on FFT magnitudes).
+  Returns weighted magnitude spectrum.
+  """
+  @callback audio_perceptual_weight(
+              magnitudes :: [float()],
+              sample_rate :: pos_integer()
+            ) :: [float()]
+
   # ---------------------------------------------------------------------------
   # Crypto kernel — E2EE frame encryption, hash chains
   # ---------------------------------------------------------------------------

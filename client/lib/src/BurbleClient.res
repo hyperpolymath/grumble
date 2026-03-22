@@ -17,6 +17,39 @@
 //   Profiles:   config presets tuning latency/quality/features per use case
 //   Extensions: bespoke modules developed in consumers, extracted to Burble
 
+/// Input mode for voice.
+type inputMode = VoiceActivity | PushToTalk(string)
+
+/// Custom profile configuration.
+type profileConfig = {
+  inputMode: inputMode,
+  noiseSuppression: bool,
+  echoCancellation: bool,
+  spatialAudio: bool,
+  e2ee: bool,
+  targetLatencyMs: int,
+  bitrateKbps: int,
+}
+
+/// Use-case profiles that tune Burble for specific scenarios.
+type profile =
+  | Gaming    // Low latency, spatial audio, push-to-talk default
+  | Workspace // Always-on VAD, noise suppression, no spatial
+  | Broadcast // One-to-many, high quality, no E2EE (audience mode)
+  | Custom(profileConfig)
+
+/// Voice state of a participant.
+type voiceState = Connected | Muted | Deafened
+
+/// A participant in a room.
+type participant = {
+  id: string,
+  displayName: string,
+  voiceState: voiceState,
+  isSpeaking: bool,
+  volume: float,
+}
+
 /// Connection state for the Burble server.
 type connectionState =
   | Disconnected
@@ -44,20 +77,8 @@ type roomState =
   | InRoom({
       roomId: string,
       serverId: string,
-      participants: Dict.t<string, participant>,
+      participants: Dict.t<participant>,
     })
-
-/// A participant in a room.
-and participant = {
-  id: string,
-  displayName: string,
-  voiceState: voiceState,
-  isSpeaking: bool,
-  volume: float,
-}
-
-/// Voice state of a participant.
-and voiceState = Connected | Muted | Deafened
 
 /// Server topology capabilities (queried on connect).
 type serverCapabilities = {
@@ -72,45 +93,9 @@ type serverCapabilities = {
   audit: bool,
 }
 
-/// Client configuration.
-type config = {
-  /// Burble server URL (e.g. "ws://localhost:4000/voice").
-  serverUrl: string,
-  /// Profile to apply (gaming, workspace, broadcast, or custom).
-  profile: profile,
-  /// Registered extensions.
-  extensions: array<extension>,
-  /// Callbacks for state changes.
-  onConnectionChange: connectionState => unit,
-  onAuthChange: authState => unit,
-  onRoomChange: roomState => unit,
-  onError: string => unit,
-}
-
-/// Use-case profiles that tune Burble for specific scenarios.
-and profile =
-  | Gaming    // Low latency, spatial audio, push-to-talk default
-  | Workspace // Always-on VAD, noise suppression, no spatial
-  | Broadcast // One-to-many, high quality, no E2EE (audience mode)
-  | Custom(profileConfig)
-
-/// Custom profile configuration.
-and profileConfig = {
-  inputMode: inputMode,
-  noiseSuppression: bool,
-  echoCancellation: bool,
-  spatialAudio: bool,
-  e2ee: bool,
-  targetLatencyMs: int,
-  bitrateKbps: int,
-}
-
-/// Input mode for voice.
-and inputMode = VoiceActivity | PushToTalk(string)
-
 /// Extension interface — bespoke functionality that can be registered.
 /// Extensions receive lifecycle callbacks and can hook into the voice pipeline.
-and extension = {
+type rec extension = {
   /// Unique extension name (e.g. "idaptik-spatial", "panll-voicetag").
   name: string,
   /// Called when the client connects.
@@ -127,6 +112,21 @@ and extension = {
   onDisconnect: option<client => unit>,
 }
 
+/// Client configuration.
+and config = {
+  /// Burble server URL (e.g. "ws://localhost:4000/voice").
+  serverUrl: string,
+  /// Profile to apply (gaming, workspace, broadcast, or custom).
+  profile: profile,
+  /// Registered extensions.
+  extensions: array<extension>,
+  /// Callbacks for state changes.
+  onConnectionChange: connectionState => unit,
+  onAuthChange: authState => unit,
+  onRoomChange: roomState => unit,
+  onError: string => unit,
+}
+
 /// The client instance (mutable state).
 and client = {
   mutable connection: connectionState,
@@ -135,8 +135,8 @@ and client = {
   mutable capabilities: option<serverCapabilities>,
   config: config,
   // Internal: WebSocket handle (opaque).
-  mutable socketRef: option<{..}>,
-  mutable channelRef: option<{..}>,
+  mutable socketRef: option<JSON.t>,
+  mutable channelRef: option<JSON.t>,
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +301,7 @@ let token = (client: client): option<string> => {
   switch client.auth {
   | Anonymous => None
   | Guest(_) => None
-  | Authenticated({accessToken}) => Some(accessToken)
+  | Authenticated({accessToken, _}) => Some(accessToken)
   }
 }
 

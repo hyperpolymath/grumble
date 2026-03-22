@@ -17,25 +17,25 @@
 
 /// Signaling event types received from the server.
 type serverEvent =
-  | PresenceState(Dict.t<string, {..}>)
-  | PresenceDiff({joins: Dict.t<string, {..}>, leaves: Dict.t<string, {..}>})
+  | PresenceState(JSON.t)
+  | PresenceDiff({joins: JSON.t, leaves: JSON.t})
   | VoiceStateChanged({userId: string, voiceState: string})
-  | Signal({from: string, toSelf: string, signalType: string, payload: {..}})
+  | Signal({from: string, toSelf: string, signalType: string, payload: JSON.t})
   | TextMessage({userId: string, displayName: string, body: string, sentAt: string})
-  | RoomState({..})
+  | RoomState(JSON.t)
   | Error(string)
 
 /// Signaling callbacks.
 type callbacks = {
   onEvent: serverEvent => unit,
-  onJoined: {..} => unit,
+  onJoined: JSON.t => unit,
   onError: string => unit,
 }
 
 /// Signaling connection state.
 type signalingState = {
-  mutable socket: option<{..}>,
-  mutable channel: option<{..}>,
+  mutable socket: option<JSON.t>,
+  mutable channel: option<JSON.t>,
   mutable connected: bool,
   mutable roomId: option<string>,
   serverUrl: string,
@@ -47,7 +47,44 @@ type signalingState = {
 // ---------------------------------------------------------------------------
 
 /// Phoenix Socket constructor.
-@new @module("phoenix") external makeSocket: (string, {..}) => {..} = "Socket"
+@new @module("phoenix") external makeSocket: (string, {..}) => JSON.t = "Socket"
+
+// ---------------------------------------------------------------------------
+// External: property access and method call helpers for opaque JS objects
+// ---------------------------------------------------------------------------
+
+/// Call a no-arg method on a JSON.t value (e.g. socket.connect()).
+@send external callMethod0: (JSON.t, @as(json`undefined`) _, string) => unit = "call"
+
+/// Generic: call connect() on a socket.
+@send external socketConnect: JSON.t => unit = "connect"
+
+/// Generic: call disconnect() on a socket.
+@send external socketDisconnect: JSON.t => unit = "disconnect"
+
+/// Get a channel from a socket.
+@send external socketChannel: (JSON.t, string, {..}) => JSON.t = "channel"
+
+/// Register an event handler on a channel.
+@send external channelOn: (JSON.t, string, JSON.t => unit) => unit = "on"
+
+/// Join a channel, returns a push object.
+@send external channelJoin: JSON.t => JSON.t = "join"
+
+/// Leave a channel.
+@send external channelLeave: JSON.t => unit = "leave"
+
+/// Push a message to a channel.
+@send external channelPush: (JSON.t, string, {..}) => unit = "push"
+
+/// Register a callback on a push result.
+@send external pushReceive: (JSON.t, string, JSON.t => unit) => JSON.t = "receive"
+
+/// Get a string property from a JSON.t value.
+@get_index external getStr: (JSON.t, string) => string = ""
+
+/// Get a JSON.t property from a JSON.t value.
+@get_index external getJson: (JSON.t, string) => JSON.t = ""
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -72,7 +109,7 @@ let make = (serverUrl: string, callbacks: callbacks): signalingState => {
 /// Connect to the Burble server's voice WebSocket endpoint.
 let connect = (state: signalingState, token: string): unit => {
   let socket = makeSocket(state.serverUrl, {"params": {"token": token}})
-  socket["connect"]()
+  socketConnect(socket)
   state.socket = Some(socket)
   state.connected = true
 }
@@ -82,7 +119,7 @@ let connectGuest = (state: signalingState, displayName: string): unit => {
   let socket = makeSocket(state.serverUrl, {
     "params": {"guest": "true", "display_name": displayName},
   })
-  socket["connect"]()
+  socketConnect(socket)
   state.socket = Some(socket)
   state.connected = true
 }
@@ -90,12 +127,12 @@ let connectGuest = (state: signalingState, displayName: string): unit => {
 /// Disconnect from the server.
 let disconnect = (state: signalingState): unit => {
   switch state.channel {
-  | Some(ch) => ch["leave"]()
+  | Some(ch) => channelLeave(ch)
   | None => ()
   }
 
   switch state.socket {
-  | Some(s) => s["disconnect"]()
+  | Some(s) => socketDisconnect(s)
   | None => ()
   }
 
@@ -115,46 +152,46 @@ let joinRoom = (state: signalingState, roomId: string, displayName: string): uni
   | None => state.callbacks.onError("Not connected")
   | Some(socket) =>
     let topic = "room:" ++ roomId
-    let channel = socket["channel"](topic, {"display_name": displayName})
+    let channel = socketChannel(socket, topic, {"display_name": displayName})
 
     // Wire server event handlers.
-    channel["on"]("presence_state", (payload: {..}) => {
-      state.callbacks.onEvent(PresenceState(Obj.magic(payload)))
+    channelOn(channel, "presence_state", (payload) => {
+      state.callbacks.onEvent(PresenceState(payload))
     })
 
-    channel["on"]("voice_state_changed", (payload: {..}) => {
+    channelOn(channel, "voice_state_changed", (payload) => {
       state.callbacks.onEvent(VoiceStateChanged({
-        userId: payload["user_id"],
-        voiceState: payload["voice_state"],
+        userId: getStr(payload, "user_id"),
+        voiceState: getStr(payload, "voice_state"),
       }))
     })
 
-    channel["on"]("signal", (payload: {..}) => {
+    channelOn(channel, "signal", (payload) => {
       state.callbacks.onEvent(Signal({
-        from: payload["from"],
-        toSelf: payload["to"],
-        signalType: payload["type"],
-        payload: payload["payload"],
+        from: getStr(payload, "from"),
+        toSelf: getStr(payload, "to"),
+        signalType: getStr(payload, "type"),
+        payload: getJson(payload, "payload"),
       }))
     })
 
-    channel["on"]("text", (payload: {..}) => {
+    channelOn(channel, "text", (payload) => {
       state.callbacks.onEvent(TextMessage({
-        userId: payload["user_id"],
-        displayName: payload["display_name"],
-        body: payload["body"],
-        sentAt: payload["sent_at"],
+        userId: getStr(payload, "user_id"),
+        displayName: getStr(payload, "display_name"),
+        body: getStr(payload, "body"),
+        sentAt: getStr(payload, "sent_at"),
       }))
     })
 
     // Join the channel.
-    let joinPush = channel["join"]()
-    joinPush["receive"]("ok", (resp: {..}) => {
+    let joinPush = channelJoin(channel)
+    let _ = pushReceive(joinPush, "ok", (resp) => {
       state.roomId = Some(roomId)
       state.callbacks.onJoined(resp)
     })
-    joinPush["receive"]("error", (resp: {..}) => {
-      state.callbacks.onError("Join failed: " ++ Obj.magic(resp))
+    let _ = pushReceive(joinPush, "error", (resp) => {
+      state.callbacks.onError("Join failed: " ++ JSON.stringify(resp))
     })
 
     state.channel = Some(channel)
@@ -164,7 +201,7 @@ let joinRoom = (state: signalingState, roomId: string, displayName: string): uni
 /// Leave the current room channel.
 let leaveRoom = (state: signalingState): unit => {
   switch state.channel {
-  | Some(ch) => ch["leave"]()
+  | Some(ch) => channelLeave(ch)
   | None => ()
   }
   state.channel = None
@@ -178,16 +215,16 @@ let leaveRoom = (state: signalingState): unit => {
 /// Send a voice state update.
 let sendVoiceState = (state: signalingState, voiceState: string): unit => {
   switch state.channel {
-  | Some(ch) => ch["push"]("voice_state", {"state": voiceState})
+  | Some(ch) => channelPush(ch, "voice_state", {"state": voiceState})
   | None => ()
   }
 }
 
 /// Send a WebRTC signaling message (SDP offer/answer, ICE candidate).
-let sendSignal = (state: signalingState, to: string, signalType: string, payload: {..}): unit => {
+let sendSignal = (state: signalingState, to: string, signalType: string, payload: JSON.t): unit => {
   switch state.channel {
   | Some(ch) =>
-    ch["push"]("signal", {"to": to, "type": signalType, "payload": payload})
+    channelPush(ch, "signal", {"to": to, "type": signalType, "payload": payload})
   | None => ()
   }
 }
@@ -195,7 +232,7 @@ let sendSignal = (state: signalingState, to: string, signalType: string, payload
 /// Send a text message in the room.
 let sendText = (state: signalingState, body: string): unit => {
   switch state.channel {
-  | Some(ch) => ch["push"]("text", {"body": body})
+  | Some(ch) => channelPush(ch, "text", {"body": body})
   | None => ()
   }
 }
@@ -203,7 +240,7 @@ let sendText = (state: signalingState, body: string): unit => {
 /// Send a whisper (directed audio) request.
 let sendWhisper = (state: signalingState, to: string): unit => {
   switch state.channel {
-  | Some(ch) => ch["push"]("whisper", {"to": to})
+  | Some(ch) => channelPush(ch, "whisper", {"to": to})
   | None => ()
   }
 }

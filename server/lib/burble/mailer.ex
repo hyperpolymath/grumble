@@ -25,7 +25,7 @@ defmodule Burble.Email do
 
   The link contains a token that expires in 15 minutes.
   """
-  def magic_link(to_email, token, base_url \\ "http://localhost:4000") do
+  def magic_link(to_email, token, base_url \\ "http://localhost:6473") do
     link = "#{base_url}/auth/magic?token=#{token}"
 
     new()

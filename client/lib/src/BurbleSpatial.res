@@ -6,7 +6,7 @@
 // PannerNode. Each peer's audio is positioned in 3D space based on
 // their game-world coordinates.
 //
-// This is an EXTENSION — developed for IDApTIK's Jessica↔Q co-op
+// This is an EXTENSION — developed for IDApTIK's Jessica/Q co-op
 // voice, extracted to Burble's client lib for reuse. Any consumer
 // can register it; it's not part of the core.
 //
@@ -34,7 +34,7 @@ type orientation = {
 /// Spatial audio state (module-level, shared across extension instances).
 type spatialState = {
   /// Peer positions: peerId => position.
-  mutable peerPositions: Dict.t<string, position>,
+  mutable peerPositions: Dict.t<position>,
   /// Listener (local player) position.
   mutable listenerPosition: position,
   /// Listener orientation.
@@ -85,7 +85,8 @@ let setPeerPosition = (peerId: string, pos: position): unit => {
 
 /// Remove a peer's spatial tracking (e.g. on leave).
 let removePeer = (peerId: string): unit => {
-  state.peerPositions->Dict.delete(peerId)
+  // Remove peer from position tracking by ignoring the deleted value.
+  let _ = Dict.delete(state.peerPositions, peerId)
 }
 
 /// Set the local listener's position (typically the player character).

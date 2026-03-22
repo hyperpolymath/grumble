@@ -95,9 +95,19 @@
 - [ ] podman-compose for one-command deployment (server + verisimdb)
 - [ ] Production multi-node reference deployment docs
 
+### Port and transport
+- [x] Change server port from 4000 to 6473 (dev, runtime, mailer, auth defaults)
+- [x] Bebop schemas for voice signaling (priv/schemas/voice_signal.bop, room_event.bop)
+- [x] QUIC transport module (Burble.Transport.QUIC — quicer, 0-RTT, multiplexed streams)
+- [x] RTSP transport module (Burble.Transport.RTSP — broadcast rooms, screen share, CCTV)
+- [ ] Wire QUIC transport into supervision tree and endpoint negotiation
+- [ ] Wire RTSP transport into supervision tree and stage room creation
+- [ ] Bebop code generation (Elixir encoder/decoder from .bop schemas)
+- [ ] IDApTIK Q character CCTV feeds via RTSP mountpoints (/live/idaptik/{level}/cctv/{cam})
+
 ## Long term
 
-- [ ] Stage/broadcast rooms
+- [ ] Stage/broadcast rooms (RTSP transport ready — wire to room lifecycle)
 - [ ] Soundboard/clip injection (moderation-controlled)
 - [ ] SSO / enterprise auth
 - [ ] Webhooks and bot framework
@@ -113,6 +123,6 @@
 - VeriSimDB replaces PostgreSQL — run VeriSimDB on port 8080 before starting Burble
 - Dev user: dev@burble.local / burble_dev_123
 - Contractiles: 23/23 must checks passing
-- Run with: `cd server && mix phx.server` → http://localhost:4000/
+- Run with: `cd server && mix phx.server` → http://localhost:6473/
 - VeriSimDB: `cd nextgen-databases/verisimdb && cargo run` → http://localhost:8080/
 - Zig NIFs: `cd ffi/zig && zig build -Doptimize=ReleaseFast` → copy to server/priv/

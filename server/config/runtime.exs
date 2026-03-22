@@ -56,4 +56,33 @@ if config_env() == :prod do
 
   config :burble, Burble.Topology,
     mode: String.to_existing_atom(topology)
+
+  # Base URL for magic link emails and invite links.
+  base_url = System.get_env("BURBLE_BASE_URL") || "https://#{host}"
+
+  config :burble,
+    base_url: base_url
+
+  # SMTP configuration for magic link email delivery.
+  # All four SMTP_* variables must be set for production email sending.
+  # If not set, falls back to Swoosh.Adapters.Local (emails logged, not sent).
+  smtp_host = System.get_env("SMTP_HOST")
+
+  if smtp_host do
+    smtp_port = String.to_integer(System.get_env("SMTP_PORT") || "587")
+    smtp_user = System.get_env("SMTP_USER") || raise "SMTP_USER required when SMTP_HOST is set"
+    smtp_pass = System.get_env("SMTP_PASS") || raise "SMTP_PASS required when SMTP_HOST is set"
+
+    config :burble, Burble.Mailer,
+      adapter: Swoosh.Adapters.SMTP,
+      relay: smtp_host,
+      port: smtp_port,
+      username: smtp_user,
+      password: smtp_pass,
+      ssl: smtp_port == 465,
+      tls: :if_available,
+      auth: :always,
+      retries: 2,
+      no_mx_lookups: false
+  end
 end

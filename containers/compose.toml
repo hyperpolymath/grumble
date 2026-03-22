@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 #
-# Burble — Podman/Selur Compose configuration.
+# Burble — Podman Compose configuration (legacy).
 #
-# One-command deployment: podman-compose -f containers/compose.toml up
-# Or (when selur-compose is ready): selur-compose up
+# PREFER: selur-compose.toml (selur-compose or podman-compose).
+# This file is retained for backwards compatibility.
 #
 # Services:
 #   burble-server  — Elixir OTP control plane + coprocessor NIFs
@@ -11,29 +11,29 @@
 #   verisimdb      — VeriSimDB database (Rust core)
 #
 # Ports:
-#   4000 — Burble API + WebSocket signaling
-#   8080 — Web client
-#   8081 — VeriSimDB API
+#   6473 — Burble web client (public)
+#   Internal: server on 6473, VeriSimDB on 8080
 
 [project]
 name = "burble"
 
 [services.verisimdb]
 build = { context = "../../nextgen-databases/verisimdb", dockerfile = "Containerfile" }
-ports = ["8081:8080"]
 restart = "unless-stopped"
+networks = ["burble-net"]
 healthcheck = { test = "wget -q --spider http://localhost:8080/health || exit 1", interval = "30s", timeout = "5s", retries = 3 }
 
 [services.server]
 build = { context = "..", dockerfile = "containers/Containerfile.server" }
-ports = ["4000:4000"]
-depends_on = ["verisimdb"]
+depends_on = { verisimdb = { condition = "service_healthy" } }
 restart = "unless-stopped"
+networks = ["burble-net"]
 environment = [
   "PHX_SERVER=true",
-  "PORT=4000",
+  "PORT=6473",
   "VERISIMDB_URL=http://verisimdb:8080",
   "BURBLE_TOPOLOGY=monarchic",
+  "PROVEN_LIB_DIR=/app/lib/burble-0.1.0/priv",
 ]
 # Secrets — set these at deploy time:
 #   SECRET_KEY_BASE=<mix phx.gen.secret>
@@ -41,9 +41,10 @@ environment = [
 
 [services.web]
 build = { context = "..", dockerfile = "containers/Containerfile.web" }
-ports = ["8080:80"]
+ports = ["6473:80"]
 depends_on = ["server"]
 restart = "unless-stopped"
+networks = ["burble-net"]
 
 [networks.burble-net]
 driver = "bridge"

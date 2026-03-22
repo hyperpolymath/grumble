@@ -1,0 +1,454 @@
+/* SPDX-License-Identifier: PMPL-1.0-or-later */
+/* Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> */
+/*
+ * Burble — Mobile-first responsive CSS baseline.
+ *
+ * Breakpoints:
+ *   mobile:  < 640px  (default — styles written mobile-first)
+ *   tablet:  640px – 1024px
+ *   desktop: > 1024px
+ *
+ * Key layout decisions:
+ *   - Voice controls bar fixed at bottom (thumb-reachable on mobile).
+ *   - Room list as slide-out drawer on mobile, sidebar on desktop.
+ *   - Text chat takes full width on mobile.
+ *   - Touch-friendly button sizes (min 44x44px per WCAG/Apple HIG).
+ *   - Orientation lock suggestion for voice-only mode.
+ *
+ * This file provides structural responsive rules only. Colours, themes,
+ * and component-specific styles live in their own files.
+ */
+
+/* =========================================================================
+ * CSS Custom Properties (design tokens)
+ * ========================================================================= */
+
+:root {
+  /* Spacing scale (4px base). */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* Touch target minimum (WCAG 2.5.5 / Apple HIG). */
+  --touch-min: 44px;
+
+  /* Voice controls bar height. */
+  --voice-bar-height: 64px;
+
+  /* Room sidebar width (desktop). */
+  --sidebar-width: 260px;
+
+  /* Safe area insets for notched devices (iPhone, etc.). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Z-index layers. */
+  --z-base: 0;
+  --z-sidebar: 100;
+  --z-overlay: 200;
+  --z-voice-bar: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+}
+
+/* =========================================================================
+ * Base / Reset
+ * ========================================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Prevent font-size scaling in landscape on iOS. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  /* Prevent overscroll bounce (distracting during voice calls). */
+  overscroll-behavior: none;
+  /* Respect safe area on notched devices. */
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* =========================================================================
+ * App Shell (mobile-first)
+ * ========================================================================= */
+
+/* The main app container fills the viewport. */
+.burble-app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh; /* Dynamic viewport height — accounts for mobile browser chrome. */
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Main content area — takes all space except voice bar. */
+.burble-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0; /* Allow flex children to shrink. */
+  overflow: hidden;
+}
+
+/* =========================================================================
+ * Room Sidebar / Drawer
+ *
+ * Mobile:  Off-screen slide-out drawer (left edge, full height).
+ * Desktop: Fixed sidebar on the left.
+ * ========================================================================= */
+
+.burble-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-width);
+  z-index: var(--z-sidebar);
+  transform: translateX(-100%);
+  transition: transform 0.25s ease-in-out;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* When the drawer is open (toggled via JS). */
+.burble-sidebar.is-open {
+  transform: translateX(0);
+}
+
+/* Overlay behind the drawer (mobile only). */
+.burble-sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: calc(var(--z-sidebar) - 1);
+}
+
+.burble-sidebar.is-open ~ .burble-sidebar-overlay {
+  display: block;
+}
+
+/* Room list items — touch-friendly height. */
+.burble-room-item {
+  min-height: var(--touch-min);
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* =========================================================================
+ * Text Chat
+ *
+ * Mobile:  Full-width, stacked vertically.
+ * Desktop: Takes remaining space next to sidebar.
+ * ========================================================================= */
+
+.burble-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Message list — scrollable. */
+.burble-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--space-sm) var(--space-md);
+  /* Leave room for voice bar at bottom. */
+  padding-bottom: calc(var(--voice-bar-height) + var(--space-md) + var(--safe-bottom));
+}
+
+/* Chat input area. */
+.burble-chat-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  /* Push above voice bar. */
+  margin-bottom: calc(var(--voice-bar-height) + var(--safe-bottom));
+}
+
+.burble-chat-input input,
+.burble-chat-input textarea {
+  flex: 1;
+  min-height: var(--touch-min);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 16px; /* Prevents iOS zoom on focus. */
+}
+
+.burble-chat-input button {
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+}
+
+/* =========================================================================
+ * Voice Controls Bar
+ *
+ * Fixed at the bottom of the viewport on all breakpoints.
+ * Contains: mute, deafen, push-to-talk, screen share, audio level, settings.
+ * ========================================================================= */
+
+.burble-voice-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--voice-bar-height) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  z-index: var(--z-voice-bar);
+  /* Slight blur backdrop for readability over content. */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Voice control buttons — touch-friendly. */
+.burble-voice-btn {
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: var(--space-sm);
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* Prevent accidental double-tap zoom. */
+  touch-action: manipulation;
+}
+
+/* Active state feedback for touch. */
+.burble-voice-btn:active {
+  transform: scale(0.92);
+  transition: transform 0.1s ease;
+}
+
+/* Audio level indicator bar. */
+.burble-audio-level {
+  width: 80px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.burble-audio-level-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.05s linear;
+}
+
+/* =========================================================================
+ * Screen Share
+ *
+ * When a screen share is active, it takes the main content area.
+ * The chat can be toggled as an overlay panel.
+ * ========================================================================= */
+
+.burble-screen-share {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  /* Leave room for voice bar. */
+  padding-bottom: calc(var(--voice-bar-height) + var(--safe-bottom));
+}
+
+.burble-screen-share video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* Local preview (picture-in-picture style). */
+.burble-screen-share-preview {
+  position: fixed;
+  bottom: calc(var(--voice-bar-height) + var(--space-md) + var(--safe-bottom));
+  right: var(--space-md);
+  width: 160px;
+  height: 90px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: var(--z-overlay);
+}
+
+.burble-screen-share-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* =========================================================================
+ * Tablet Breakpoint (640px – 1024px)
+ *
+ * Room list still a drawer but wider. Chat gets more breathing room.
+ * ========================================================================= */
+
+@media (min-width: 640px) {
+  .burble-sidebar {
+    width: 300px;
+  }
+
+  .burble-chat-messages {
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  .burble-chat-input {
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  /* Screen share preview can be larger. */
+  .burble-screen-share-preview {
+    width: 240px;
+    height: 135px;
+  }
+
+  /* Voice bar can show labels alongside icons. */
+  .burble-voice-btn-label {
+    display: inline;
+    font-size: 12px;
+    margin-left: var(--space-xs);
+  }
+}
+
+/* =========================================================================
+ * Desktop Breakpoint (> 1024px)
+ *
+ * Room sidebar is always visible. Main layout is horizontal.
+ * Chat panel can sit beside the screen share.
+ * ========================================================================= */
+
+@media (min-width: 1024px) {
+  /* Sidebar is always visible on desktop — no drawer behaviour. */
+  .burble-sidebar {
+    position: relative;
+    transform: none;
+    flex-shrink: 0;
+    width: var(--sidebar-width);
+  }
+
+  /* Overlay is never shown on desktop. */
+  .burble-sidebar-overlay {
+    display: none !important;
+  }
+
+  /* Main area becomes horizontal (sidebar + content). */
+  .burble-main {
+    flex-direction: row;
+  }
+
+  /* Chat no longer needs bottom padding for voice bar (bar is less intrusive). */
+  .burble-chat-messages {
+    padding-bottom: calc(var(--voice-bar-height) + var(--space-lg));
+  }
+
+  /* Voice bar sticks to bottom of the main content column, not full width. */
+  .burble-voice-bar {
+    left: var(--sidebar-width);
+  }
+
+  /* Screen share preview is larger on desktop. */
+  .burble-screen-share-preview {
+    width: 320px;
+    height: 180px;
+    right: var(--space-lg);
+  }
+}
+
+/* =========================================================================
+ * Orientation Lock Suggestion
+ *
+ * In voice-only mode (no text chat, no screen share), suggest portrait
+ * orientation on mobile for easier thumb reach. This uses a CSS-only
+ * hint — actual locking requires the Screen Orientation API in JS.
+ * ========================================================================= */
+
+@media (max-width: 640px) and (orientation: landscape) {
+  /* Show a gentle hint when in voice-only landscape mode. */
+  .burble-orientation-hint {
+    display: flex;
+    position: fixed;
+    top: var(--space-sm);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: 8px;
+    font-size: 13px;
+    z-index: var(--z-toast);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 640px) and (orientation: portrait) {
+  .burble-orientation-hint {
+    display: none;
+  }
+}
+
+/* =========================================================================
+ * Utility: Touch-friendly interactive elements
+ *
+ * Ensures all clickable elements meet the 44x44px minimum touch target.
+ * ========================================================================= */
+
+button,
+[role="button"],
+a.burble-link,
+.burble-interactive {
+  min-height: var(--touch-min);
+  min-width: var(--touch-min);
+  /* Prevent accidental double-tap zoom on all interactive elements. */
+  touch-action: manipulation;
+}
+
+/* =========================================================================
+ * Reduced Motion
+ *
+ * Respect user's OS-level motion preference.
+ * ========================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  .burble-sidebar {
+    transition: none;
+  }
+
+  .burble-voice-btn:active {
+    transition: none;
+  }
+
+  .burble-audio-level-fill {
+    transition: none;
+  }
+}

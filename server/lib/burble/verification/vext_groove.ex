@@ -131,7 +131,7 @@ defmodule Burble.Verification.VextGroove do
         :unavailable
 
       {:error, reason} ->
-        Logger.warn("VextGroove: failed to connect to Vext: #{inspect(reason)}")
+        Logger.warning("VextGroove: failed to connect to Vext: #{inspect(reason)}")
         {:error, reason}
     end
   end

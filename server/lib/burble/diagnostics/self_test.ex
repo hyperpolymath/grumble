@@ -457,36 +457,36 @@ defmodule Burble.Diagnostics.SelfTest do
   end
 
   defp test_jitter_buffer do
-    state = %{buffer: [], next_seq: 0, max_size: 10}
+    state = %{}
 
-    # Insert out-of-order packets.
-    {jitter_us, {_frame, _state}} =
+    # Push a packet into the jitter buffer using the current API.
+    # Returns {:ok, frame_or_nil, updated_buffer}.
+    {jitter_us, {:ok, _frame, _buffer}} =
       :timer.tc(fn ->
-        # Uses runtime dispatch — io_jitter_buffer_insert/2 may not yet exist;
-        # the current API is io_jitter_buffer_push/4.
-        apply(SmartBackend, :io_jitter_buffer_insert, [
-          %{seq: 0, timestamp: 0, data: :crypto.strong_rand_bytes(100)},
-          state
-        ])
+        SmartBackend.io_jitter_buffer_push(state, :crypto.strong_rand_bytes(100), 0, 0)
       end)
 
     %{
       status: :pass,
       insert_us: jitter_us,
-      detail: "Jitter buffer insert: #{jitter_us}µs."
+      detail: "Jitter buffer push: #{jitter_us}us."
     }
   end
 
   defp test_packet_loss_concealment do
-    prev_frame = generate_tone(440.0)
+    # io_conceal_loss/2 expects a list of previous encoded (binary) frames
+    # and a frame size in bytes.
+    pcm = generate_tone(440.0)
+    {:ok, encoded} = SmartBackend.audio_encode(pcm, @sample_rate, 1, 32_000)
+    frame_size = byte_size(encoded)
 
     {plc_us, concealed} =
-      :timer.tc(fn -> SmartBackend.io_conceal_loss(prev_frame, 1) end)
+      :timer.tc(fn -> SmartBackend.io_conceal_loss([encoded], frame_size) end)
 
     %{
-      status: if(length(concealed) == @frame_length, do: :pass, else: :fail),
+      status: if(is_binary(concealed) and byte_size(concealed) == frame_size, do: :pass, else: :fail),
       plc_us: plc_us,
-      detail: "PLC: #{plc_us}µs for #{@frame_length} samples."
+      detail: "PLC: #{plc_us}us for #{frame_size}-byte frame."
     }
   end
 

@@ -20,6 +20,7 @@ defmodule BurbleWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug BurbleWeb.Plugs.InputSanitizer
     plug BurbleWeb.Plugs.RateLimiter
   end
 
@@ -30,6 +31,7 @@ defmodule BurbleWeb.Router do
 
   pipeline :authenticated_api do
     plug :accepts, ["json"]
+    plug BurbleWeb.Plugs.InputSanitizer
     plug Burble.Auth.GuardianPipeline
   end
 

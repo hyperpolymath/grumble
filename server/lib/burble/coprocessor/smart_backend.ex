@@ -83,7 +83,12 @@ defmodule Burble.Coprocessor.SmartBackend do
 
   @impl true
   def audio_echo_cancel(capture, reference, filter_length) do
-    zig_or_elixir().audio_echo_cancel(capture, reference, filter_length)
+    # Normalise return type: Zig NIF wraps in {:ok, list}, Elixir returns plain list.
+    case zig_or_elixir().audio_echo_cancel(capture, reference, filter_length) do
+      {:ok, result} when is_list(result) -> result
+      result when is_list(result) -> result
+      other -> other
+    end
   end
 
   # Signal science additions — all Elixir for now, Zig candidates for Phase 2.

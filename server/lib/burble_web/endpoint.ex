@@ -44,7 +44,13 @@ defmodule BurbleWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
-  plug Corsica, origins: "*", allow_headers: :all
+  # CORS configuration. In production, restrict to the configured origin.
+  # Default: allow all origins in dev/test, restrict in prod.
+  plug Corsica,
+    origins: Application.compile_env(:burble, :cors_origins, "*"),
+    allow_headers: ["content-type", "authorization", "accept", "x-requested-with"],
+    allow_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    max_age: 600
 
   # Groove discovery — must be before the router so /.well-known/groove
   # is handled regardless of other pipeline configuration.

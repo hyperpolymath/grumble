@@ -501,30 +501,215 @@ defmodule Burble.Transport.QUIC do
   end
 
   # Handle incoming signaling data (Bebop-encoded voice_signal messages).
-  # Decodes and dispatches to the appropriate room/media handler.
+  #
+  # Decodes the Bebop VoiceSignal union discriminator (1 byte) and dispatches
+  # to the appropriate handler. The Bebop wire format uses a single byte
+  # discriminator tag followed by the variant's field data.
+  #
+  # Discriminator values (from voice_signal.bop):
+  #   1 = Join, 2 = Leave, 3 = Mute, 4 = Unmute, 5 = Deafen,
+  #   6 = SpeakingStart, 7 = SpeakingStop, 8 = PositionUpdate,
+  #   9 = Offer, 10 = Answer, 11 = IceCandidate
+  #
+  # For Join/Leave/Mute/Unmute/Deafen, we extract the roomId and userId
+  # from the Bebop length-prefixed string fields and dispatch via PubSub
+  # and runtime module calls (same path as the WebSocket channel handlers).
+  #
+  # For Offer/Answer/IceCandidate (WebRTC signaling), we forward the raw
+  # payload to the Media.Engine which manages PeerConnection state.
   @spec handle_signal_data(conn_handle(), connection_state(), binary(), state()) ::
           {:noreply, state()}
-  defp handle_signal_data(_conn, conn_state, data, state) do
-    # TODO: Decode Bebop VoiceSignal union and dispatch.
-    # For now, forward raw bytes to the signaling handler.
-    Logger.debug(
-      "[Burble.Transport.QUIC] Signal data (#{byte_size(data)} bytes) " <>
-        "from user #{conn_state.user_id}"
-    )
+  defp handle_signal_data(conn, conn_state, data, state) do
+    case data do
+      # Discriminator tag 1 = Join
+      <<1, payload::binary>> ->
+        {room_id, rest} = decode_bebop_string(payload)
+        {user_id, rest2} = decode_bebop_string(rest)
+        {display_name, _rest3} = decode_bebop_string(rest2)
 
-    {:noreply, state}
+        Logger.info(
+          "[Burble.Transport.QUIC] Join signal from #{display_name} (#{user_id}) for room #{room_id}"
+        )
+
+        # Update connection state with room and user identity.
+        updated =
+          update_in(state, [:connections, conn], fn cs ->
+            %{cs | room_id: room_id, user_id: user_id}
+          end)
+
+        # Notify the room of the new participant via runtime dispatch.
+        apply(Burble.Room, :join, [room_id, user_id, %{display_name: display_name, transport: :quic}])
+
+        {:noreply, updated}
+
+      # Discriminator tag 2 = Leave
+      <<2, payload::binary>> ->
+        {room_id, rest} = decode_bebop_string(payload)
+        {user_id, rest2} = decode_bebop_string(rest)
+        {reason, _rest3} = decode_bebop_string(rest2)
+
+        Logger.info("[Burble.Transport.QUIC] Leave signal from #{user_id}: #{reason}")
+        apply(Burble.Room, :leave, [room_id, user_id, reason])
+        {:noreply, state}
+
+      # Discriminator tag 3 = Mute
+      <<3, payload::binary>> ->
+        {room_id, rest} = decode_bebop_string(payload)
+        {user_id, rest2} = decode_bebop_string(rest)
+        <<mute_state::8, _rest3::binary>> = rest2
+
+        Logger.debug("[Burble.Transport.QUIC] Mute signal: user=#{user_id} state=#{mute_state}")
+
+        Phoenix.PubSub.broadcast(
+          Burble.PubSub,
+          "room:#{room_id}",
+          {:voice_state_changed, %{user_id: user_id, voice_state: "muted"}}
+        )
+
+        {:noreply, state}
+
+      # Discriminator tag 4 = Unmute
+      <<4, payload::binary>> ->
+        {room_id, rest} = decode_bebop_string(payload)
+        {user_id, _rest2} = decode_bebop_string(rest)
+
+        Logger.debug("[Burble.Transport.QUIC] Unmute signal: user=#{user_id}")
+
+        Phoenix.PubSub.broadcast(
+          Burble.PubSub,
+          "room:#{room_id}",
+          {:voice_state_changed, %{user_id: user_id, voice_state: "connected"}}
+        )
+
+        {:noreply, state}
+
+      # Discriminator tag 5 = Deafen
+      <<5, payload::binary>> ->
+        {room_id, rest} = decode_bebop_string(payload)
+        {user_id, rest2} = decode_bebop_string(rest)
+        <<deafen_state::8, _rest3::binary>> = rest2
+
+        Logger.debug("[Burble.Transport.QUIC] Deafen signal: user=#{user_id} state=#{deafen_state}")
+
+        Phoenix.PubSub.broadcast(
+          Burble.PubSub,
+          "room:#{room_id}",
+          {:voice_state_changed, %{user_id: user_id, voice_state: "deafened"}}
+        )
+
+        {:noreply, state}
+
+      # Discriminator tag 9 = Offer (WebRTC SDP)
+      <<9, payload::binary>> ->
+        {_room_id, rest} = decode_bebop_string(payload)
+        {user_id, rest2} = decode_bebop_string(rest)
+
+        Logger.debug("[Burble.Transport.QUIC] SDP Offer from #{user_id}")
+        apply(Burble.Media.Engine, :handle_sdp_offer, [user_id, rest2])
+        {:noreply, state}
+
+      # Discriminator tag 10 = Answer (WebRTC SDP)
+      <<10, payload::binary>> ->
+        {_room_id, rest} = decode_bebop_string(payload)
+        {user_id, rest2} = decode_bebop_string(rest)
+
+        Logger.debug("[Burble.Transport.QUIC] SDP Answer from #{user_id}")
+        apply(Burble.Media.Peer, :apply_sdp_answer, [user_id, rest2])
+        {:noreply, state}
+
+      # Discriminator tag 11 = IceCandidate
+      <<11, payload::binary>> ->
+        {_room_id, rest} = decode_bebop_string(payload)
+        {user_id, rest2} = decode_bebop_string(rest)
+
+        Logger.debug("[Burble.Transport.QUIC] ICE candidate from #{user_id}")
+        apply(Burble.Media.Peer, :add_ice_candidate, [user_id, rest2])
+        {:noreply, state}
+
+      # Tags 6-8 (SpeakingStart, SpeakingStop, PositionUpdate) are server→client
+      # only and should not be received from clients. Log and ignore.
+      <<tag, _payload::binary>> when tag in [6, 7, 8] ->
+        Logger.warning(
+          "[Burble.Transport.QUIC] Received server-only signal tag #{tag} from client #{conn_state.user_id}, ignoring"
+        )
+
+        {:noreply, state}
+
+      # Unknown or malformed signal — log and drop.
+      _ ->
+        Logger.warning(
+          "[Burble.Transport.QUIC] Malformed signal data (#{byte_size(data)} bytes) " <>
+            "from user #{conn_state.user_id}"
+        )
+
+        {:noreply, state}
+    end
+  rescue
+    error ->
+      Logger.error(
+        "[Burble.Transport.QUIC] Error handling signal from #{conn_state.user_id}: #{inspect(error)}"
+      )
+
+      {:noreply, state}
   end
 
   # Handle incoming text chat data on the reliable text stream.
+  #
+  # Text messages arrive as UTF-8 JSON on the reliable text stream.
+  # We decode and broadcast to the room via PubSub, mirroring the
+  # same path as WebSocket text messages in RoomChannel.handle_in("text").
   @spec handle_text_data(conn_handle(), connection_state(), binary(), state()) ::
           {:noreply, state()}
   defp handle_text_data(_conn, conn_state, data, state) do
-    Logger.debug(
-      "[Burble.Transport.QUIC] Text data (#{byte_size(data)} bytes) " <>
-        "from user #{conn_state.user_id}"
-    )
+    case Jason.decode(data) do
+      {:ok, %{"body" => body}} when is_binary(body) and byte_size(body) > 0 and byte_size(body) <= 2000 ->
+        room_id = conn_state.room_id
+        user_id = conn_state.user_id
 
-    {:noreply, state}
+        Logger.debug(
+          "[Burble.Transport.QUIC] Text message (#{byte_size(body)} bytes) " <>
+            "from user #{user_id} in room #{room_id}"
+        )
+
+        # Broadcast to the room via PubSub (same event shape as WebSocket channel).
+        Phoenix.PubSub.broadcast(
+          Burble.PubSub,
+          "room:#{room_id}",
+          {:new_text_message, %{
+            user_id: user_id,
+            body: body,
+            transport: :quic,
+            timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+          }}
+        )
+
+        {:noreply, state}
+
+      {:ok, _} ->
+        Logger.warning("[Burble.Transport.QUIC] Invalid text message format from #{conn_state.user_id}")
+        {:noreply, state}
+
+      {:error, _} ->
+        Logger.warning(
+          "[Burble.Transport.QUIC] Non-JSON text data (#{byte_size(data)} bytes) " <>
+            "from user #{conn_state.user_id}"
+        )
+
+        {:noreply, state}
+    end
+  end
+
+  # Decode a Bebop length-prefixed string from binary data.
+  #
+  # Bebop strings are encoded as: <<length::32-little, data::binary-size(length)>>.
+  # Returns {string, remaining_bytes}.
+  @spec decode_bebop_string(binary()) :: {String.t(), binary()}
+  defp decode_bebop_string(<<len::32-little, str::binary-size(len), rest::binary>>) do
+    {str, rest}
+  end
+
+  defp decode_bebop_string(data) do
+    {"", data}
   end
 
   # Format a peer address from quicer connection info for logging.

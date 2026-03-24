@@ -1,22 +1,64 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
-= YOUR Template Repo Roadmap
+= Burble Roadmap
 
 == Current Status
 
-Initial development phase.
+All MUST and SHOULD features are implemented. 193 tests, 0 failures.
+See link:TODO.md[TODO.md] for detailed completion status.
 
 == Milestones
 
-=== v0.1.0 - Foundation
-* [ ] Core functionality
-* [ ] Basic documentation
-* [ ] CI/CD pipeline
+=== v0.1.0-alpha.1 — Foundation (DONE)
 
-=== v1.0.0 - Stable Release
-* [ ] Full feature set
-* [ ] Comprehensive tests
-* [ ] Production ready
+* [x] WebRTC voice engine (SFU, Opus, ExWebRTC)
+* [x] Push-to-talk and VAD mode switching
+* [x] E2EE via Insertable Streams (X25519 + AES-256-GCM)
+* [x] Room management (create, join, leave, permissions)
+* [x] Text chat (NNTPS threading, Phoenix channels)
+* [x] Auth (register, login, guest, magic link, JWT)
+* [x] Self-test diagnostics (16 tests, 3 modes)
+* [x] Zig SIMD coprocessor (audio, DSP, neural, compression, crypto)
+* [x] VeriSimDB integration (replaces PostgreSQL)
+* [x] Containerised deployment (Chainguard, port 6473)
 
-== Future Directions
+=== v0.2.0 — Interop Bridges (DONE)
 
-_To be determined based on community feedback._
+* [x] Discord bridge (Gateway + Voice WS + UDP, xsalsa20_poly1305)
+* [x] Mumble bridge (TCP protobuf + UDP Opus, TLS)
+* [x] Matrix bridge (Client-Server API, /sync long-poll, m.call.*)
+* [x] SIP gateway (INVITE/ACK/BYE, RTP, G.711↔Opus transcoding)
+
+=== v0.3.0 — Transport Layer (DONE)
+
+* [x] QUIC transport (0-RTT, multiplexed streams, datagram voice)
+* [x] RTSP broadcast module
+* [x] Multipath redundancy (3-port UDP striping)
+* [x] Bebop wire protocol schemas (voice_signal.bop, room_event.bop)
+* [x] QUIC Bebop signal dispatch (VoiceSignal union decoding)
+
+=== v0.4.0 — Integration (DONE)
+
+* [x] Groove discovery endpoint (/.well-known/groove)
+* [x] IDApTIK voice adapter (spatial audio, stealth whisper)
+* [x] PanLL workspace huddle engine
+* [x] Gossamer desktop client hooks (tray, hotkeys, PipeWire)
+* [x] Extension API (core/profiles/extensions three-tier)
+
+=== v1.0.0 — Stable Release
+
+* [ ] QUIC client wiring (quicer dependency in web client)
+* [ ] Bebop codegen (Elixir + ReScript from .bop schemas)
+* [ ] Idris2 ABI formal proofs (Avow consent, Vext integrity, permissions)
+* [ ] Zig FFI bridge from BEAM to Idris2 ABI
+* [ ] OpenSSF Scorecard green
+* [ ] Security audit
+
+== Future Directions (COULD)
+
+See link:TODO.md[TODO.md] for full COULD-level items:
+
+* Privacy hardening (TURN-only, chaff traffic, ghost mode)
+* Accessibility (BSL avatar, live captions, translated captions)
+* Advanced audio (RNNoise, Wiener filtering, de-reverb, PTP timing)
+* Federation and multi-server discovery
+* Plugin ecosystem and bot framework

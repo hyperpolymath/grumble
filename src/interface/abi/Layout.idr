@@ -1,16 +1,17 @@
 -- SPDX-License-Identifier: PMPL-1.0-or-later
--- Copyright (c) {{CURRENT_YEAR}} {{AUTHOR}} (hyperpolymath) <{{AUTHOR_EMAIL}}>
+-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 --
-||| Memory Layout Proofs
+||| Memory Layout Proofs for Burble ABI
 |||
 ||| This module provides formal proofs about memory layout, alignment,
-||| and padding for C-compatible structs.
+||| and padding for C-compatible structs used in the Burble audio
+||| coprocessor FFI (Zig NIF ↔ BEAM interop).
 |||
 ||| @see https://en.wikipedia.org/wiki/Data_structure_alignment
 
-module {{PROJECT}}.ABI.Layout
+module Burble.ABI.Layout
 
-import {{PROJECT}}.ABI.Types
+import Burble.ABI.Types
 import Data.Vect
 import Data.So
 

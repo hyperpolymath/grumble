@@ -3,6 +3,8 @@
 :toc: preamble
 :icons: font
 
+image:https://api.thegreenwebfoundation.org/greencheckimage/jewell.nexus[Green Hosting,link="https://www.thegreenwebfoundation.org/green-web-check/?url=jewell.nexus"]
+
 Voice first. Friction last. Complexity optional.
 
 == What is Burble?

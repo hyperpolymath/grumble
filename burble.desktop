@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Name=Burble
+GenericName=Voice Communications
+Comment=Self-hostable voice platform with sub-second join times
+Exec=burble-launcher %u
+Icon=burble
+Categories=Network;Chat;AudioVideo;
+Terminal=false
+StartupWMClass=burble
+Keywords=voice;voip;webrtc;communications;selfhosted;
+MimeType=x-scheme-handler/burble;
+Actions=gossamer;web;
+
+[Desktop Action gossamer]
+Name=Launch Desktop App (Gossamer)
+Exec=burble-launcher --gossamer
+
+[Desktop Action web]
+Name=Launch in Browser
+Exec=burble-launcher --web

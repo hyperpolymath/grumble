@@ -1,0 +1,71 @@
+{
+  "groove_version": "1",
+  "service_id": "burble",
+  "service_version": "0.1.0",
+  "capabilities": {
+    "voice": {
+      "type": "voice",
+      "description": "Real-time voice communication with spatial audio",
+      "protocol": "webrtc",
+      "endpoint": "/voice",
+      "requires_auth": true,
+      "panel_compatible": true
+    },
+    "text": {
+      "type": "text",
+      "description": "Text messaging with presence awareness",
+      "protocol": "websocket",
+      "endpoint": "/text",
+      "requires_auth": true,
+      "panel_compatible": true
+    },
+    "presence": {
+      "type": "presence",
+      "description": "User presence and availability tracking",
+      "protocol": "websocket",
+      "endpoint": "/presence",
+      "requires_auth": true,
+      "panel_compatible": true
+    },
+    "spatial-audio": {
+      "type": "spatial-audio",
+      "description": "3D spatial audio positioning",
+      "protocol": "webrtc",
+      "endpoint": "/voice/spatial",
+      "requires_auth": true,
+      "panel_compatible": true
+    },
+    "recording": {
+      "type": "recording",
+      "description": "Session recording and playback",
+      "protocol": "http",
+      "endpoint": "/api/recordings",
+      "requires_auth": true,
+      "panel_compatible": false
+    },
+    "tts": {
+      "type": "tts",
+      "description": "Text-to-speech synthesis",
+      "protocol": "http",
+      "endpoint": "/api/tts",
+      "requires_auth": false,
+      "panel_compatible": true
+    },
+    "stt": {
+      "type": "stt",
+      "description": "Speech-to-text transcription",
+      "protocol": "websocket",
+      "endpoint": "/api/stt",
+      "requires_auth": true,
+      "panel_compatible": true
+    }
+  },
+  "consumes": ["integrity", "octad-storage", "scanning"],
+  "endpoints": {
+    "health": "/health",
+    "groove": "/.well-known/groove",
+    "mesh": "/.well-known/groove/mesh"
+  },
+  "health": "/health",
+  "applicability": ["individual", "team", "massive-open"]
+}

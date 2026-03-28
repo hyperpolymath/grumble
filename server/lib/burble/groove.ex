@@ -17,9 +17,13 @@
 # - GrooveHandle is linear: consumers MUST disconnect (no dangling grooves)
 #
 # Groove Protocol:
-#   GET  /.well-known/groove         — Capability manifest (JSON)
-#   POST /.well-known/groove/message — Receive message from consumer
-#   GET  /.well-known/groove/recv    — Pending messages for consumer
+#   GET  /.well-known/groove            — Capability manifest (JSON)
+#   POST /.well-known/groove/message    — Receive message from consumer
+#   GET  /.well-known/groove/recv       — Pending messages for consumer
+#   POST /.well-known/groove/connect    — Establish connection (spec 4.2)
+#   POST /.well-known/groove/disconnect — Tear down connection (spec 4.5)
+#   GET  /.well-known/groove/heartbeat  — Heartbeat keepalive (spec 4.3)
+#   GET  /.well-known/groove/status     — Current connection states
 #
 # Integration Patterns:
 #   Gossamer  → Voice panel in webview shell (spatial audio, PTT, presence)
@@ -40,6 +44,27 @@ defmodule Burble.Groove do
   """
 
   use GenServer
+
+  require Logger
+
+  # --- Connection Lifecycle States ---
+  #
+  # DISCOVERED -> NEGOTIATING -> CONNECTED -> ACTIVE -> DISCONNECTING -> DISCONNECTED
+  #                  |                          |
+  #               REJECTED                   DEGRADED -> RECONNECTING -> ACTIVE
+  #
+  # See: standards/groove-protocol/spec/SPEC.adoc section 4.
+
+  @type connection_state ::
+          :discovered
+          | :negotiating
+          | :connected
+          | :active
+          | :degraded
+          | :reconnecting
+          | :disconnecting
+          | :disconnected
+          | :rejected
 
   @manifest %{
     groove_version: "1",
@@ -117,6 +142,9 @@ defmodule Burble.Groove do
   # Maximum queue depth to prevent memory exhaustion.
   @max_queue_depth 1000
 
+  # Heartbeat timeout: 3 missed heartbeats at 5s interval = 15s (per spec section 4.3).
+  @heartbeat_timeout_ms 15_000
+
   # --- Client API ---
 
   @doc "Start the groove GenServer."
@@ -147,11 +175,68 @@ defmodule Burble.Groove do
     GenServer.call(__MODULE__, :depth)
   end
 
+  # --- Connection Lifecycle API ---
+
+  @doc """
+  Handle a connect request from a groove consumer.
+
+  Accepts the peer's manifest, checks structural compatibility, and returns
+  a session ID if compatible. Transitions the connection through:
+  DISCOVERED -> NEGOTIATING -> CONNECTED.
+
+  Returns `{:ok, session_id}` on success or `{:error, reason}` on rejection.
+  """
+  @spec connect(map()) :: {:ok, String.t()} | {:error, String.t()}
+  def connect(peer_manifest) when is_map(peer_manifest) do
+    GenServer.call(__MODULE__, {:connect, peer_manifest})
+  end
+
+  @doc """
+  Handle a disconnect request from a groove consumer.
+
+  Consumes the session handle and transitions to DISCONNECTED.
+  Returns `:ok` on success or `{:error, :not_found}` if the session does not exist.
+  """
+  @spec disconnect(String.t()) :: :ok | {:error, :not_found}
+  def disconnect(session_id) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:disconnect, session_id})
+  end
+
+  @doc """
+  Record a heartbeat from a connected peer.
+
+  Resets the heartbeat timeout timer. Returns `:ok` if the session exists.
+  """
+  @spec heartbeat(String.t()) :: :ok | {:error, :not_found}
+  def heartbeat(session_id) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:heartbeat, session_id})
+  end
+
+  @doc """
+  Return the current status of all groove connections.
+
+  Returns a map of session_id => connection info (peer_id, state, connected_at,
+  last_heartbeat, capabilities).
+  """
+  @spec connection_status() :: map()
+  def connection_status do
+    GenServer.call(__MODULE__, :connection_status)
+  end
+
   # --- GenServer Callbacks ---
 
   @impl true
   def init(_opts) do
-    {:ok, %{queue: :queue.new(), depth: 0}}
+    # Schedule periodic heartbeat checks.
+    :timer.send_interval(5_000, :check_heartbeats)
+
+    {:ok,
+     %{
+       queue: :queue.new(),
+       depth: 0,
+       # Connections: %{session_id => %{peer_id, state, connected_at, last_heartbeat, manifest}}
+       connections: %{}
+     }}
   end
 
   @impl true
@@ -174,5 +259,138 @@ defmodule Burble.Groove do
   @impl true
   def handle_call(:depth, _from, %{depth: d} = state) do
     {:reply, d, state}
+  end
+
+  @impl true
+  def handle_call({:connect, peer_manifest}, _from, state) do
+    peer_id = Map.get(peer_manifest, "service_id", "unknown")
+
+    # Check structural compatibility: the peer must consume at least one
+    # capability that we offer. This is a simplified runtime check — the
+    # full compile-time proof lives in Groove.idr (Idris2 ABI layer).
+    peer_consumes = Map.get(peer_manifest, "consumes", [])
+    our_offer_ids = Map.keys(@manifest.capabilities) |> Enum.map(&Atom.to_string/1)
+
+    matched_capabilities =
+      Enum.filter(peer_consumes, fn cap ->
+        cap in our_offer_ids
+      end)
+
+    if matched_capabilities == [] and peer_consumes != [] do
+      Logger.info("[Groove] Rejected connection from #{peer_id}: no capability match")
+      {:reply, {:error, "no matching capabilities"}, state}
+    else
+      session_id = generate_session_id()
+      now = System.system_time(:millisecond)
+
+      conn_info = %{
+        peer_id: peer_id,
+        state: :connected,
+        connected_at: now,
+        last_heartbeat: now,
+        matched_capabilities: matched_capabilities,
+        manifest: peer_manifest
+      }
+
+      new_connections = Map.put(state.connections, session_id, conn_info)
+
+      Logger.info(
+        "[Groove] Connected: #{peer_id} (session=#{session_id}, capabilities=#{inspect(matched_capabilities)})"
+      )
+
+      {:reply, {:ok, session_id}, %{state | connections: new_connections}}
+    end
+  end
+
+  @impl true
+  def handle_call({:disconnect, session_id}, _from, state) do
+    case Map.pop(state.connections, session_id) do
+      {nil, _connections} ->
+        {:reply, {:error, :not_found}, state}
+
+      {conn_info, remaining} ->
+        Logger.info(
+          "[Groove] Disconnected: #{conn_info.peer_id} (session=#{session_id})"
+        )
+
+        {:reply, :ok, %{state | connections: remaining}}
+    end
+  end
+
+  @impl true
+  def handle_call({:heartbeat, session_id}, _from, state) do
+    case Map.get(state.connections, session_id) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      conn_info ->
+        now = System.system_time(:millisecond)
+        updated = %{conn_info | last_heartbeat: now, state: :active}
+        new_connections = Map.put(state.connections, session_id, updated)
+        {:reply, :ok, %{state | connections: new_connections}}
+    end
+  end
+
+  @impl true
+  def handle_call(:connection_status, _from, state) do
+    status =
+      Map.new(state.connections, fn {session_id, info} ->
+        {session_id,
+         %{
+           peer_id: info.peer_id,
+           state: info.state,
+           connected_at: info.connected_at,
+           last_heartbeat: info.last_heartbeat,
+           matched_capabilities: info.matched_capabilities
+         }}
+      end)
+
+    {:reply, status, state}
+  end
+
+  # --- Heartbeat Monitoring ---
+
+  @impl true
+  def handle_info(:check_heartbeats, state) do
+    now = System.system_time(:millisecond)
+
+    updated_connections =
+      Enum.reduce(state.connections, %{}, fn {session_id, info}, acc ->
+        elapsed = now - info.last_heartbeat
+
+        cond do
+          # Timed out — transition to DISCONNECTED and remove.
+          elapsed > @heartbeat_timeout_ms and info.state == :degraded ->
+            Logger.warning(
+              "[Groove] Peer #{info.peer_id} (session=#{session_id}) timed out, removing"
+            )
+
+            acc
+
+          # Missed heartbeats — transition to DEGRADED.
+          elapsed > @heartbeat_timeout_ms ->
+            Logger.warning(
+              "[Groove] Peer #{info.peer_id} (session=#{session_id}) degraded (no heartbeat for #{elapsed}ms)"
+            )
+
+            Map.put(acc, session_id, %{info | state: :degraded})
+
+          true ->
+            Map.put(acc, session_id, info)
+        end
+      end)
+
+    {:noreply, %{state | connections: updated_connections}}
+  end
+
+  # Catch-all for unexpected messages.
+  @impl true
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # --- Helpers ---
+
+  # Generate a unique session ID (hex-encoded random bytes).
+  defp generate_session_id do
+    :crypto.strong_rand_bytes(16) |> Base.hex_encode32(case: :lower, padding: false)
   end
 end

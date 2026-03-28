@@ -7,9 +7,13 @@
 # groove-aware systems) probe to discover Burble's capabilities.
 #
 # Routes:
-#   GET  /.well-known/groove         → JSON manifest (static)
-#   POST /.well-known/groove/message → Receive message from consumer
-#   GET  /.well-known/groove/recv    → Drain pending messages for consumer
+#   GET  /.well-known/groove            → JSON manifest (static)
+#   POST /.well-known/groove/message    → Receive message from consumer
+#   GET  /.well-known/groove/recv       → Drain pending messages for consumer
+#   POST /.well-known/groove/connect    → Establish groove connection (spec 4.2)
+#   POST /.well-known/groove/disconnect → Tear down groove connection (spec 4.5)
+#   GET  /.well-known/groove/heartbeat  → Heartbeat keepalive (spec 4.3)
+#   GET  /.well-known/groove/status     → Current connection states
 #
 # This plug is designed to be inserted early in the pipeline (before
 # the router) so that groove discovery works regardless of other
@@ -108,6 +112,163 @@ defmodule BurbleWeb.Plugs.GroovePlug do
     |> halt()
   end
 
+  # POST /.well-known/groove/connect — Establish a groove connection.
+  #
+  # The consumer sends its manifest. Burble checks structural compatibility
+  # (does the consumer consume something we offer?) and returns a session ID.
+  # Per spec section 4.2: DISCOVERED -> NEGOTIATING -> CONNECTED.
+  def call(
+        %Plug.Conn{method: "POST", path_info: [".well-known", "groove", "connect"]} = conn,
+        _opts
+      ) do
+    peer_manifest = parse_json_body(conn)
+
+    case peer_manifest do
+      {:ok, manifest} ->
+        case Burble.Groove.connect(manifest) do
+          {:ok, session_id} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(
+              200,
+              Jason.encode!(%{
+                ok: true,
+                session_id: session_id,
+                provider: "burble",
+                state: "connected"
+              })
+            )
+            |> halt()
+
+          {:error, reason} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(
+              409,
+              Jason.encode!(%{ok: false, error: reason, state: "rejected"})
+            )
+            |> halt()
+        end
+
+      {:error, _reason} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, ~s({"ok":false,"error":"invalid JSON body"}))
+        |> halt()
+    end
+  end
+
+  # POST /.well-known/groove/disconnect — Tear down a groove connection.
+  #
+  # Consumes the linear connection handle. Per spec section 4.5.
+  # Expects JSON body with "session_id".
+  def call(
+        %Plug.Conn{method: "POST", path_info: [".well-known", "groove", "disconnect"]} = conn,
+        _opts
+      ) do
+    case parse_json_body(conn) do
+      {:ok, %{"session_id" => session_id}} when is_binary(session_id) ->
+        case Burble.Groove.disconnect(session_id) do
+          :ok ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(
+              200,
+              Jason.encode!(%{ok: true, state: "disconnected"})
+            )
+            |> halt()
+
+          {:error, :not_found} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(404, ~s({"ok":false,"error":"session not found"}))
+            |> halt()
+        end
+
+      _ ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, ~s({"ok":false,"error":"missing session_id"}))
+        |> halt()
+    end
+  end
+
+  # GET /.well-known/groove/heartbeat — Heartbeat from connected peer.
+  #
+  # Per spec section 4.3. Returns 204 No Content on success.
+  # Expects ?session_id= query parameter.
+  def call(
+        %Plug.Conn{method: "GET", path_info: [".well-known", "groove", "heartbeat"]} = conn,
+        _opts
+      ) do
+    conn = Plug.Conn.fetch_query_params(conn)
+    session_id = conn.query_params["session_id"]
+
+    case session_id do
+      nil ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, ~s({"ok":false,"error":"missing session_id query parameter"}))
+        |> halt()
+
+      sid ->
+        case Burble.Groove.heartbeat(sid) do
+          :ok ->
+            conn
+            |> send_resp(204, "")
+            |> halt()
+
+          {:error, :not_found} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(404, ~s({"ok":false,"error":"session not found"}))
+            |> halt()
+        end
+    end
+  end
+
+  # GET /.well-known/groove/status — Current connection state for all peers.
+  #
+  # Returns a JSON object keyed by session_id with connection info.
+  def call(
+        %Plug.Conn{method: "GET", path_info: [".well-known", "groove", "status"]} = conn,
+        _opts
+      ) do
+    status =
+      try do
+        Burble.Groove.connection_status()
+      catch
+        :exit, _ -> %{}
+      end
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(status))
+    |> halt()
+  end
+
   # Pass through everything else.
   def call(conn, _opts), do: conn
+
+  # --- Helpers ---
+
+  # Parse JSON from the request body, handling both pre-parsed and raw bodies.
+  defp parse_json_body(conn) do
+    case conn.body_params do
+      %Plug.Conn.Unfetched{} ->
+        case Plug.Conn.read_body(conn) do
+          {:ok, body, _conn} -> Jason.decode(body)
+          _ -> {:error, :no_body}
+        end
+
+      %{"_json" => json} when is_map(json) ->
+        {:ok, json}
+
+      params when is_map(params) and map_size(params) > 0 ->
+        {:ok, params}
+
+      _ ->
+        {:error, :empty}
+    end
+  end
 end

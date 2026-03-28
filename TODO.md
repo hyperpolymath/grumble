@@ -156,7 +156,7 @@ All MUST and SHOULD features are implemented. See ROADMAP below for COULD items.
 
 ```bash
 # Start server (dev)
-cd server && PROVEN_LIB_DIR=/var/mnt/eclipse/repos/proven/ffi/zig/zig-out/lib mix phx.server
+cd server && PROVEN_LIB_DIR=/var$REPOS_DIR/proven/ffi/zig/zig-out/lib mix phx.server
 # → http://localhost:6473
 
 # VeriSimDB (required for persistence)

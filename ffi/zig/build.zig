@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "erl-include",
         "Path to Erlang NIF headers (directory containing erl_nif.h)",
-    ) orelse "/var/mnt/eclipse/hyper-data/toolchains/asdf/installs/erlang/28.3.1/erts-16.2/include";
+    ) orelse "/var$ECLIPSE_DIR/hyper-data/toolchains/asdf/installs/erlang/28.3.1/erts-16.2/include";
 
     // Root module for the NIF shared library.
     const nif_mod = b.createModule(.{

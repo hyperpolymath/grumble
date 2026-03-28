@@ -30,7 +30,7 @@ config :burble, Burble.Topology,
 
 # VeriSimDB persistent store
 config :burble, Burble.Store,
-  url: "http://localhost:8080",
+  url: "http://localhost:8093",
   auth: :none,
   timeout: 30_000
 

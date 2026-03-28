@@ -8,7 +8,7 @@ set -euo pipefail
 BURBLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_DIR="$BURBLE_DIR/server"
 CLIENT_HTML="$BURBLE_DIR/client/web/quick-join.html"
-BURBLE_PORT=6473
+BURBLE_PORT=4020
 BURBLE_URL="http://localhost:$BURBLE_PORT"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/burble"
 FIRST_RUN_FLAG="$CONFIG_DIR/.first-run-complete"

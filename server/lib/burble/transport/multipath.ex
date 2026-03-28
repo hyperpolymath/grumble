@@ -4,7 +4,7 @@
 # Burble.Transport.Multipath — Multipath/line-bonding transport layer.
 #
 # Burble uses multiple UDP ports for different traffic classes:
-#   - Port 6473: Voice audio (latency-critical, lossy OK)
+#   - Port 4020: Voice audio (latency-critical, lossy OK)
 #   - Port 6474: Bulk data (file transfers, screen share, non-critical)
 #   - Port 6475: Signaling mirror (critical control messages, duplicated)
 #
@@ -42,7 +42,7 @@ defmodule Burble.Transport.Multipath do
 
   | Port | Purpose | Strategy |
   |------|---------|----------|
-  | 6473 | Voice audio | Lowest RTT, single path |
+  | 4020 | Voice audio | Lowest RTT, single path |
   | 6474 | Bulk data | Striped across paths |
   | 6475 | Signaling | Duplicated on all paths |
 
@@ -91,7 +91,7 @@ defmodule Burble.Transport.Multipath do
         }
 
   # Default ports for each traffic class.
-  @voice_port 6473
+  @voice_port 4020
   @bulk_port 6474
   @signaling_port 6475
 
@@ -117,7 +117,7 @@ defmodule Burble.Transport.Multipath do
   Start the multipath transport manager.
 
   Options:
-    - `:voice_port` — UDP port for voice traffic (default: 6473)
+    - `:voice_port` — UDP port for voice traffic (default: 4020)
     - `:bulk_port` — UDP port for bulk traffic (default: 6474)
     - `:signaling_port` — UDP port for signaling traffic (default: 6475)
     - `:bind_address` — IP address to bind to (default: {0, 0, 0, 0})
@@ -131,7 +131,7 @@ defmodule Burble.Transport.Multipath do
   @doc """
   Send a packet via the appropriate path(s) for the given traffic class.
 
-  - `:voice` — sent on the lowest-RTT healthy path (port 6473)
+  - `:voice` — sent on the lowest-RTT healthy path (port 4020)
   - `:bulk` — striped across all healthy paths (port 6474)
   - `:signaling` — duplicated on ALL paths (port 6475)
 

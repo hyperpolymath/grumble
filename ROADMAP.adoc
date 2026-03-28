@@ -19,7 +19,7 @@ See link:TODO.md[TODO.md] for detailed completion status.
 * [x] Self-test diagnostics (16 tests, 3 modes)
 * [x] Zig SIMD coprocessor (audio, DSP, neural, compression, crypto)
 * [x] VeriSimDB integration (replaces PostgreSQL)
-* [x] Containerised deployment (Chainguard, port 6473)
+* [x] Containerised deployment (Chainguard, port 4020)
 
 === v0.2.0 — Interop Bridges (DONE)
 

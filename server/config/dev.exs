@@ -4,12 +4,12 @@ import Config
 
 # VeriSimDB for development — local instance on default port.
 config :burble, Burble.Store,
-  url: "http://localhost:8080",
+  url: "http://localhost:8093",
   auth: :none,
   timeout: 30_000
 
 config :burble, BurbleWeb.Endpoint,
-  http: [ip: {127, 0, 0, 1}, port: 6473],
+  http: [ip: {127, 0, 0, 1}, port: 4020],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,

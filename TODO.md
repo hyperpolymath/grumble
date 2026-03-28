@@ -57,7 +57,7 @@ All MUST and SHOULD features are implemented. See ROADMAP below for COULD items.
 - [x] Containerfile.server (multi-stage Chainguard, OTP release, non-root)
 - [x] Containerfile.web (nginx SPA)
 - [x] selur-compose.toml (server + web + verisimdb)
-- [x] Port 6473 (all configs updated)
+- [x] Port 4020 (all configs updated)
 
 ### Transport (SHOULD — done)
 - [x] QUIC module (0-RTT, multiplexed streams, connection migration)

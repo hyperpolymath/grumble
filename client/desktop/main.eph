@@ -30,7 +30,7 @@ import Gossamer.Capabilities
 // ---------------------------------------------------------------------------
 
 // Default Burble server URL. Overridable via BURBLE_URL env var or config file.
-let defaultServerUrl: String = "http://localhost:6473"
+let defaultServerUrl: String = "http://localhost:4020"
 
 // Window dimensions matching Discord's default size.
 let windowWidth: I32 = 1280

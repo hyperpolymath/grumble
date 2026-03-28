@@ -17,15 +17,33 @@ setInterval(() => {
   }
 }, 10_000);
 
-const cors: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Content-Type": "application/json",
-};
+// CORS origin policy.
+// This is a PUBLIC WebRTC signaling relay — browsers from any origin need to
+// reach it for the rendezvous handshake. Wildcard "*" is the safe default
+// because signaling carries only ephemeral SDP blobs (no credentials, no
+// session tokens).
+//
+// To restrict in production, set ALLOWED_ORIGINS in the Deno Deploy dashboard
+// (comma-separated):
+//   ALLOWED_ORIGINS=https://burble.example.com,https://app.example.com
+const ALLOWED_ORIGINS = Deno.env.get("ALLOWED_ORIGINS") || "*";
+
+function getCorsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("Origin") || "";
+  const allowedOrigin = ALLOWED_ORIGINS === "*"
+    ? "*"
+    : ALLOWED_ORIGINS.split(",").map(o => o.trim()).includes(origin) ? origin : "";
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Content-Type": "application/json",
+  };
+}
 
 Deno.serve((req: Request) => {
   const url = new URL(req.url);
+  const cors = getCorsHeaders(req);
 
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 

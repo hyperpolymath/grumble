@@ -113,7 +113,7 @@ defmodule Burble.Transport.QUIC do
   # Default configuration
   # ---------------------------------------------------------------------------
 
-  # QUIC listens on the next port after the HTTP server (6473 + 1).
+  # QUIC listens on the next port after the HTTP server (4020 + 1).
   @default_port 6474
 
   # ALPN protocol identifier — clients must match this to connect.

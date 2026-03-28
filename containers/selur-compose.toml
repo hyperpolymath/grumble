@@ -5,7 +5,7 @@
 #
 # Services:
 #   burble-server  — Elixir OTP control plane + Zig coprocessor NIFs
-#   burble-web     — ReScript SPA served by nginx (exposed on port 6473)
+#   burble-web     — ReScript SPA served by nginx (exposed on port 4020)
 #   verisimdb      — VeriSimDB persistent store (internal only)
 #
 # Usage:
@@ -43,7 +43,7 @@ restart = "unless-stopped"
 networks = ["burble-internal"]
 environment = [
   "PHX_SERVER=true",
-  "PORT=6473",
+  "PORT=4020",
   "PHX_HOST=localhost",
   "VERISIMDB_URL=http://verisimdb:8080",
   "BURBLE_TOPOLOGY=monarchic",
@@ -57,16 +57,16 @@ environment = [
 #   SMTP_PORT=587
 #   SMTP_USER=noreply@example.com
 #   SMTP_PASS=<smtp password>
-healthcheck = { test = "wget -q --spider http://localhost:6473/api/v1/auth/guest || exit 1", interval = "30s", timeout = "5s", retries = 3 }
+healthcheck = { test = "wget -q --spider http://localhost:4020/api/v1/auth/guest || exit 1", interval = "30s", timeout = "5s", retries = 3 }
 
 # =============================================================================
-# Burble Web — ReScript SPA via nginx (publicly exposed on port 6473)
+# Burble Web — ReScript SPA via nginx (publicly exposed on port 4020)
 # =============================================================================
 [services.web]
 build = { context = "..", dockerfile = "containers/Containerfile.web" }
 depends_on = ["server"]
 restart = "unless-stopped"
-ports = ["6473:80"]
+ports = ["4020:80"]
 networks = ["burble-internal"]
 
 # =============================================================================

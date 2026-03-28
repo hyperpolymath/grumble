@@ -19,8 +19,24 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // CORS origin policy.
+    // This is a PUBLIC WebRTC signaling relay — browsers from any origin need
+    // to reach it for the rendezvous handshake. Wildcard "*" is the safe
+    // default because signaling carries only ephemeral SDP blobs (no
+    // credentials, no session tokens).
+    //
+    // To restrict in production, add an ALLOWED_ORIGINS env binding in
+    // wrangler.toml (comma-separated):
+    //   [vars]
+    //   ALLOWED_ORIGINS = "https://burble.example.com,https://app.example.com"
+    const allowedOrigins = env.ALLOWED_ORIGINS || "*";
+    const origin = request.headers.get("Origin") || "";
+    const allowedOrigin = allowedOrigins === "*"
+      ? "*"
+      : allowedOrigins.split(",").map(o => o.trim()).includes(origin) ? origin : "";
     const cors = {
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": allowedOrigin,
       "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
       "Content-Type": "application/json",

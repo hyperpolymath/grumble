@@ -5,7 +5,7 @@
 #
 # Exposes Burble's voice/text capabilities via the groove discovery protocol.
 # Any groove-aware system (Gossamer, PanLL, GSA, AmbientOps, etc.) can discover
-# Burble by probing GET /.well-known/groove on port 6473.
+# Burble by probing GET /.well-known/groove on port 4020.
 #
 # Works standalone — Burble functions perfectly without any groove consumer.
 # When a consumer connects, additional features light up (panel embedding,
@@ -130,10 +130,10 @@ defmodule Burble.Groove do
     },
     consumes: ["integrity", "octad-storage", "scanning"],
     endpoints: %{
-      voice_ws: "ws://localhost:6473/voice",
-      channel_ws: "ws://localhost:6473/socket/websocket",
-      api: "http://localhost:6473/api/v1",
-      health: "http://localhost:6473/api/v1/health"
+      voice_ws: "ws://localhost:4020/voice",
+      channel_ws: "ws://localhost:4020/socket/websocket",
+      api: "http://localhost:4020/api/v1",
+      health: "http://localhost:4020/api/v1/health"
     },
     health: "/api/v1/health",
     applicability: ["individual", "team", "massive-open"]

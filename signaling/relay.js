@@ -20,6 +20,20 @@
 const PORT = parseInt(Deno.env.get("RELAY_PORT") || "6476");
 const TTL_MS = 60_000; // Rooms expire after 60 seconds
 
+// CORS origin policy.
+// This is a PUBLIC WebRTC signaling relay — browsers from any origin need to
+// reach it for the rendezvous handshake. Wildcard "*" is the safe default for
+// local development because signaling carries only ephemeral SDP blobs (no
+// credentials, no session tokens).
+//
+// In production, restrict origins by setting ALLOWED_ORIGINS to a
+// comma-separated list:
+//   ALLOWED_ORIGINS="https://burble.example.com,https://app.example.com"
+const ALLOWED_ORIGINS = Deno.env.get("ALLOWED_ORIGINS") || "*";
+if (ALLOWED_ORIGINS === "*") {
+  console.warn("[Burble Relay] WARNING: CORS allows all origins (ALLOWED_ORIGINS not set). Fine for local dev; set ALLOWED_ORIGINS in production.");
+}
+
 const rooms = new Map(); // name -> { offer?, answer?, created }
 
 // Cleanup expired rooms every 30s
@@ -32,8 +46,12 @@ setInterval(() => {
 
 Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
   const url = new URL(req.url);
+  const origin = req.headers.get("Origin") || "";
+  const allowedOrigin = ALLOWED_ORIGINS === "*"
+    ? "*"
+    : ALLOWED_ORIGINS.split(",").map(o => o.trim()).includes(origin) ? origin : "";
   const cors = {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",

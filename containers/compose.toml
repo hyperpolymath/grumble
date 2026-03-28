@@ -11,8 +11,8 @@
 #   verisimdb      — VeriSimDB database (Rust core)
 #
 # Ports:
-#   6473 — Burble web client (public)
-#   Internal: server on 6473, VeriSimDB on 8080
+#   4020 — Burble web client (public)
+#   Internal: server on 4020, VeriSimDB on 8080
 
 [project]
 name = "burble"
@@ -30,7 +30,7 @@ restart = "unless-stopped"
 networks = ["burble-net"]
 environment = [
   "PHX_SERVER=true",
-  "PORT=6473",
+  "PORT=4020",
   "VERISIMDB_URL=http://verisimdb:8080",
   "BURBLE_TOPOLOGY=monarchic",
   "PROVEN_LIB_DIR=/app/lib/burble-0.1.0/priv",
@@ -41,7 +41,7 @@ environment = [
 
 [services.web]
 build = { context = "..", dockerfile = "containers/Containerfile.web" }
-ports = ["6473:80"]
+ports = ["4020:80"]
 depends_on = ["server"]
 restart = "unless-stopped"
 networks = ["burble-net"]

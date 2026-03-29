@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Typed `NifEvent` ADT for Zig NIF audio events (VadStateChange, AgcLevelChange, DenoiserConfidence)
+- Safe `pollEvents` returning `Maybe NifEvent` instead of raw `Bits64`
+- Bidirectional PositionUpdate (tag 8) decode with Vec3 + orientation relay via PubSub
+- SpeakingStart/Stop (tags 6-7) diagnostic decode with server-only enforcement
+
+### Changed
+- `prim__registerCallback` made module-private (unsafe boundary, awaits idris2#3182)
+
+### Removed
+- TODO.md (superseded by CLAUDE-WORK.md — 0 TODOs remain in codebase)
+
 ## [1.0.0-alpha.1] - 2026-03-16
 
 ### Added

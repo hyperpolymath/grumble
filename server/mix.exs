@@ -10,7 +10,7 @@
 defmodule Burble.MixProject do
   use Mix.Project
 
-  @version "1.0.0-alpha.1"
+  @version "1.0.0"
   @source_url "https://github.com/hyperpolymath/burble"
 
   def project do

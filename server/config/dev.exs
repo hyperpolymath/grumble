@@ -2,9 +2,12 @@
 
 import Config
 
-# VeriSimDB for development — local instance on default port.
+# VeriSimDB for development — Burble's dedicated instance on port 6078.
+# Port allocation: 6077=OPSM, 6078=Burble, 8090/8091=GSA, 8093=Stapeln,
+# 8094=007, 8095=Project-M, 8096=work instance.
+# Run: podman run -p 6078:8080 -v burble-verisimdb-data:/data cgr.dev/chainguard/wolfi-base
 config :burble, Burble.Store,
-  url: "http://localhost:8093",
+  url: "http://localhost:6078",
   auth: :none,
   timeout: 30_000
 

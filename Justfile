@@ -9,7 +9,7 @@ set dotenv-load := true
 set positional-arguments := true
 
 project := "burble"
-version := "0.1.0-alpha.1"
+version := "1.0.0"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEFAULT & HELP

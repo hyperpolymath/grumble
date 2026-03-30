@@ -31,7 +31,9 @@
 # =============================================================================
 # Stage 1: Build — Elixir deps, Zig NIFs, OTP release
 # =============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest AS build
+# Pin the Chainguard wolfi-base digest for reproducible builds.
+# To update: podman pull cgr.dev/chainguard/wolfi-base:latest && podman inspect --format '{{.Digest}}'
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:3eff851ab805966c768d2a8107545a96218426cee1e5cc805865505edbe6ce92 AS build
 
 # Install build toolchain: Elixir, Erlang headers, Zig, C compiler.
 RUN apk add --no-cache \
@@ -82,7 +84,8 @@ RUN MIX_ENV=prod mix release
 # =============================================================================
 # Stage 2: Runtime — Minimal Erlang + OTP release
 # =============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest AS runtime
+# Pin runtime image to same digest as build stage for consistency.
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:3eff851ab805966c768d2a8107545a96218426cee1e5cc805865505edbe6ce92 AS runtime
 
 # Install only the Erlang runtime (no compiler, no dev headers).
 RUN apk add --no-cache \
@@ -100,7 +103,7 @@ COPY --from=build --chown=burble:burble /build/server/_build/prod/rel/burble /ap
 WORKDIR /app
 
 # Proven NIF directory — mount or bake in at deploy time.
-ENV PROVEN_LIB_DIR=/app/lib/burble-0.1.0/priv
+ENV PROVEN_LIB_DIR=/app/lib/burble-1.0.0/priv
 
 # Default environment.
 ENV PHX_SERVER=true

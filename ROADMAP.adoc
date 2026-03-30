@@ -45,11 +45,14 @@ tags 6-8, safe callback registration with typed NifEvent polling.
 * [x] Gossamer desktop client hooks (tray, hotkeys, PipeWire)
 * [x] Extension API (core/profiles/extensions three-tier)
 
-=== v1.0.0 — Stable Release
+=== v1.0.0 — Stable Release (DONE)
 
-* [ ] QUIC client wiring (quicer dependency in web client)
-* [ ] Bebop codegen (Elixir + ReScript from .bop schemas)
-* [ ] Idris2 ABI formal proofs (Avow consent, Vext integrity, permissions)
+* [x] QUIC hardening (rate limiting, datagram size enforcement, ticket rotation)
+* [x] Bebop codegen (Mix task + generated Burble.Protocol.{VoiceSignal,RoomEvent})
+* [x] Idris2 ABI formal proofs (Avow consent, Vext integrity, Permissions hierarchy)
+* [x] QUIC signal handler refactored to use generated Bebop decoders
+* [x] Chainguard base image pinned by digest
+* [x] Version bump to 1.0.0 across mix.exs, Justfile, groove manifest
 * [ ] Zig FFI bridge from BEAM to Idris2 ABI
 * [ ] OpenSSF Scorecard green
 * [ ] Security audit

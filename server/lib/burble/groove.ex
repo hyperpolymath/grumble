@@ -69,7 +69,7 @@ defmodule Burble.Groove do
   @manifest %{
     groove_version: "1",
     service_id: "burble",
-    service_version: "0.1.0",
+    service_version: "1.0.0",
     capabilities: %{
       voice: %{
         type: "voice",

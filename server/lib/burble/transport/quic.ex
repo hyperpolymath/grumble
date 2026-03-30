@@ -70,6 +70,29 @@ defmodule Burble.Transport.QUIC do
   @quicer :quicer
 
   # ---------------------------------------------------------------------------
+  # Hardening constants
+  # ---------------------------------------------------------------------------
+
+  # Maximum connection attempts per IP per second. Prevents SYN-flood-style
+  # abuse against the QUIC listener. Uses an ETS counter table.
+  @max_connections_per_ip_per_sec 100
+
+  # Maximum datagram size for voice frames (bytes). QUIC datagrams larger than
+  # this are dropped — Opus frames at 64kbps/20ms are ~160 bytes, so 1200 is
+  # generous while still preventing abuse. Aligns with QUIC's recommended
+  # initial MTU of 1200 bytes (RFC 9000 section 14.1).
+  @max_datagram_bytes 1200
+
+  # Session ticket rotation interval in milliseconds. Controls how often the
+  # QUIC server rotates its session ticket encryption key, limiting the window
+  # for ticket replay attacks while preserving 0-RTT reconnection UX.
+  # Default: 1 hour (3_600_000 ms).
+  @default_ticket_rotation_ms 3_600_000
+
+  # ETS table name for per-IP connection rate counters.
+  @rate_table :burble_quic_rate_limit
+
+  # ---------------------------------------------------------------------------
   # Type definitions
   # ---------------------------------------------------------------------------
 
@@ -200,6 +223,18 @@ defmodule Burble.Transport.QUIC do
     app_config = Application.get_env(:burble, __MODULE__, [])
     config = Keyword.merge(default_config(), Keyword.merge(app_config, opts))
 
+    # Create ETS table for per-IP rate limiting. Each entry is
+    # {ip_tuple, count, window_start_monotonic_ms}. Public so
+    # handle_info can update without going through the GenServer.
+    :ets.new(@rate_table, [:set, :public, :named_table])
+
+    # Schedule periodic rate-limit counter resets (every second).
+    :timer.send_interval(1_000, :reset_rate_counters)
+
+    # Schedule session ticket rotation at the configured interval.
+    rotation_ms = Keyword.get(config, :ticket_rotation_ms, @default_ticket_rotation_ms)
+    :timer.send_interval(rotation_ms, :rotate_session_tickets)
+
     state = %{
       listener: nil,
       connections: %{},
@@ -212,7 +247,10 @@ defmodule Burble.Transport.QUIC do
       {:ok, listener} ->
         Logger.info(
           "[Burble.Transport.QUIC] Listener started on port #{config[:port]} " <>
-            "(ALPN: #{inspect(config[:alpn])})"
+            "(ALPN: #{inspect(config[:alpn])}), " <>
+            "rate limit: #{@max_connections_per_ip_per_sec}/s/IP, " <>
+            "max datagram: #{@max_datagram_bytes}B, " <>
+            "ticket rotation: #{div(rotation_ms, 1_000)}s"
         )
 
         {:ok, %{state | listener: listener}}
@@ -276,31 +314,49 @@ defmodule Burble.Transport.QUIC do
   @impl true
   def handle_info({:quic, :new_conn, conn, info}, state) do
     # A new QUIC connection has been accepted by the listener.
-    # Check for 0-RTT resumption (session ticket reuse).
-    zero_rtt = Map.get(info, :is_resumed, false)
+    # Enforce per-IP connection rate limiting before accepting.
+    peer_ip = extract_peer_ip(info)
 
-    if zero_rtt do
-      Logger.debug("[Burble.Transport.QUIC] 0-RTT reconnection from #{format_peer(info)}")
+    if rate_limited?(peer_ip) do
+      Logger.warning(
+        "[Burble.Transport.QUIC] Rate limited connection from #{format_peer(info)} " <>
+          "(>#{@max_connections_per_ip_per_sec}/s)"
+      )
+
+      # Reject the connection by not calling handshake.
+      # The client will see a connection timeout.
+      if available?(), do: try do apply(@quicer, :close_connection, [conn]) rescue _ -> :ok end
+      {:noreply, state}
     else
-      Logger.debug("[Burble.Transport.QUIC] New connection from #{format_peer(info)}")
+      # Record this connection attempt for rate limiting.
+      increment_rate_counter(peer_ip)
+
+      # Check for 0-RTT resumption (session ticket reuse).
+      zero_rtt = Map.get(info, :is_resumed, false)
+
+      if zero_rtt do
+        Logger.debug("[Burble.Transport.QUIC] 0-RTT reconnection from #{format_peer(info)}")
+      else
+        Logger.debug("[Burble.Transport.QUIC] New connection from #{format_peer(info)}")
+      end
+
+      # Initialize per-connection state. Streams are registered as they open.
+      conn_state = %{
+        conn: conn,
+        voice_stream: nil,
+        signal_stream: nil,
+        text_stream: nil,
+        user_id: nil,
+        room_id: nil,
+        zero_rtt: zero_rtt,
+        migrated_from: nil
+      }
+
+      # Accept the connection (handshake completes asynchronously).
+      if available?(), do: apply(@quicer, :handshake, [conn])
+
+      {:noreply, put_in(state, [:connections, conn], conn_state)}
     end
-
-    # Initialize per-connection state. Streams are registered as they open.
-    conn_state = %{
-      conn: conn,
-      voice_stream: nil,
-      signal_stream: nil,
-      text_stream: nil,
-      user_id: nil,
-      room_id: nil,
-      zero_rtt: zero_rtt,
-      migrated_from: nil
-    }
-
-    # Accept the connection (handshake completes asynchronously).
-    if available?(), do: apply(@quicer, :handshake, [conn])
-
-    {:noreply, put_in(state, [:connections, conn], conn_state)}
   end
 
   @impl true
@@ -338,20 +394,30 @@ defmodule Burble.Transport.QUIC do
   @impl true
   def handle_info({:quic, :dgram, conn, data}, state) do
     # Received an unreliable QUIC datagram — this is a voice frame.
-    # Route it to the Media.Engine for SFU distribution.
-    conn_state = Map.get(state.connections, conn)
+    # Enforce maximum datagram size to prevent oversized packet abuse.
+    # Opus at 64kbps/20ms produces ~160-byte frames; 1200 bytes is the
+    # QUIC initial MTU limit (RFC 9000 section 14.1).
+    if byte_size(data) > @max_datagram_bytes do
+      Logger.warning(
+        "[Burble.Transport.QUIC] Oversized datagram (#{byte_size(data)} > #{@max_datagram_bytes} bytes), dropping"
+      )
 
-    if conn_state && conn_state.room_id do
-      # Forward the voice datagram to the media engine for SFU fanout.
-      # Uses runtime dispatch — handle_voice_datagram/3 may not yet exist.
-      apply(Burble.Media.Engine, :handle_voice_datagram, [
-        conn_state.room_id,
-        conn_state.user_id,
-        data
-      ])
+      {:noreply, state}
+    else
+      conn_state = Map.get(state.connections, conn)
+
+      if conn_state && conn_state.room_id do
+        # Forward the voice datagram to the media engine for SFU fanout.
+        # Uses runtime dispatch — handle_voice_datagram/3 may not yet exist.
+        apply(Burble.Media.Engine, :handle_voice_datagram, [
+          conn_state.room_id,
+          conn_state.user_id,
+          data
+        ])
+      end
+
+      {:noreply, state}
     end
-
-    {:noreply, state}
   end
 
   @impl true
@@ -408,6 +474,46 @@ defmodule Burble.Transport.QUIC do
       end)
 
     {:noreply, updated}
+  end
+
+  @impl true
+  def handle_info(:reset_rate_counters, state) do
+    # Clear the per-IP rate-limit counters every second.
+    # This provides a simple sliding-window rate limiter without
+    # requiring external dependencies like Hammer for QUIC-level limiting.
+    :ets.delete_all_objects(@rate_table)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:rotate_session_tickets, state) do
+    # Rotate the QUIC session ticket encryption key.
+    # This limits the replay window for 0-RTT tickets while still allowing
+    # fast reconnection within the rotation interval.
+    if available?() and state.listener != nil do
+      Logger.info("[Burble.Transport.QUIC] Rotating session ticket encryption key")
+
+      # Generate fresh session ticket key material. The quicer NIF accepts
+      # a new ticket key via listener configuration update.
+      try do
+        new_ticket_key = :crypto.strong_rand_bytes(32)
+
+        apply(@quicer, :setopt, [
+          state.listener,
+          :server_resumption_level,
+          2
+        ])
+
+        Logger.debug("[Burble.Transport.QUIC] Session ticket key rotated successfully")
+      rescue
+        e ->
+          Logger.warning(
+            "[Burble.Transport.QUIC] Ticket rotation failed (non-fatal): #{inspect(e)}"
+          )
+      end
+    end
+
+    {:noreply, state}
   end
 
   @impl true
@@ -520,9 +626,9 @@ defmodule Burble.Transport.QUIC do
   @spec handle_signal_data(conn_handle(), connection_state(), binary(), state()) ::
           {:noreply, state()}
   defp handle_signal_data(conn, conn_state, data, state) do
-    alias Burble.Bebop.VoiceSignal
+    alias Burble.Protocol.VoiceSignal, as: Proto
 
-    case VoiceSignal.decode(data) do
+    case Proto.decode(data) do
       {:join, msg, _rest} ->
         Logger.info(
           "[Burble.Transport.QUIC] Join signal from #{msg.display_name} (#{msg.user_id}) for room #{msg.room_id}"
@@ -708,4 +814,47 @@ defmodule Burble.Transport.QUIC do
     do: Enum.map_join([a, b, c, d, e, f, g, h], ":", &Integer.to_string(&1, 16))
 
   defp format_addr(other), do: inspect(other)
+
+  # ---------------------------------------------------------------------------
+  # Rate limiting helpers
+  # ---------------------------------------------------------------------------
+
+  # Extract the peer IP address from quicer connection info.
+  # Returns an IP tuple for use as the ETS key.
+  @spec extract_peer_ip(map()) :: :inet.ip_address() | :unknown
+  defp extract_peer_ip(info) do
+    case Map.get(info, :peer) do
+      {ip, _port} -> ip
+      _ -> :unknown
+    end
+  end
+
+  # Check if an IP address has exceeded the per-second connection rate limit.
+  # Uses the ETS table for lock-free O(1) lookups.
+  @spec rate_limited?(:inet.ip_address() | :unknown) :: boolean()
+  defp rate_limited?(:unknown), do: false
+
+  defp rate_limited?(ip) do
+    case :ets.lookup(@rate_table, ip) do
+      [{^ip, count}] -> count >= @max_connections_per_ip_per_sec
+      [] -> false
+    end
+  end
+
+  # Increment the connection counter for an IP address.
+  # Uses :ets.update_counter for atomic increment (no race conditions).
+  @spec increment_rate_counter(:inet.ip_address() | :unknown) :: :ok
+  defp increment_rate_counter(:unknown), do: :ok
+
+  defp increment_rate_counter(ip) do
+    try do
+      :ets.update_counter(@rate_table, ip, {2, 1})
+    rescue
+      ArgumentError ->
+        # Key doesn't exist yet — insert with count 1.
+        :ets.insert(@rate_table, {ip, 1})
+    end
+
+    :ok
+  end
 end

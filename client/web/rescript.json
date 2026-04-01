@@ -14,8 +14,7 @@
   ],
   "suffix": ".res.mjs",
   "dependencies": [
-    "@rescript/core",
-    "cadre-router"
+    "@rescript/core"
   ],
   "compiler-flags": ["-open RescriptCore"]
 }

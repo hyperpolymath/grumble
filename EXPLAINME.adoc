@@ -97,23 +97,49 @@ basic setup/teardown, DTMF. Complex call transfer scenarios may not work.
 
 - Implementation: `server/lib/burble/bridges/sip.ex` (1,400+ lines)
 
-== Idris2 ABI Proofs
+== Idris2 ABI Proofs & High-Rigor Stack
 
-The coprocessor FFI boundary is formally specified in
-https://www.idris-lang.org[Idris2] with dependent types proving memory layout
-correctness. This is the hyperpolymath standard ABI/FFI pattern — Idris2 defines
-the interface, Zig implements it, C headers bridge them.
+[quote, README]
+____
+Idris2 proofs + Zig implementation ... ABI/FFI Design
+____
 
-- ABI definitions: `src/abi/Types.idr`, `src/abi/Foreign.idr`
-- More on this pattern: https://github.com/hyperpolymath/rsr-template-repo/blob/main/ABI-FFI-README.md
+Burble uses a **Dual-Track** architecture. The core Application Binary Interface (ABI) is formally specified in **Idris2** using dependent types. This proves memory layout, protocol transitions, and identity ranks before a single line of runtime code executes.
 
-== VeriSimDB
+- **Stack:** Idris2 (Formal Proofs) → Zig (FFI Implementation) → V-lang (REST/Dodeca-API) → Elixir (Control Plane).
+- **Avow:** Consent attestation on room join/leave is proven well-founded using identity ranks.
+- **Vext:** Extension sandboxing is proven safe via a capability subsumption lattice.
+- **Linearity:** `MediaPipeline.idr` uses linear types to prove that every audio buffer is consumed exactly once, preventing leaks and use-after-free at the type level.
 
-Our own formally verified database. Not PostgreSQL. Handles document and graph
-queries natively. Burble uses it as its sole data store via `Burble.Store`.
+- ABI definitions: `src/Burble/ABI/Types.idr`, `src/Burble/ABI/MediaPipeline.idr`
+- Zig FFI: `ffi/zig/src/ffi.zig`
+- V-lang API: `api/v/burble.v`
 
-- VeriSimDB: https://github.com/hyperpolymath/verisimdb
-- Burble client: `server/lib/burble/store.ex`
+== Zero-Trust SDP & AWOL Routing
+
+[quote, ROADMAP]
+____
+SDP Foundation ... AWOL Routing
+____
+
+Burble replaces traditional firewalls with a **Software-Defined Perimeter (SDP)**. The server is "black" (invisible) until a Single Packet Authorisation (SPA) packet is received. This is handled by a Zig-based `nftables` bridge for near-zero overhead.
+
+**AWOL (Always With One Link)** routing uses the Layline predictive algorithm to handle extreme network conditions (up to 30% packet loss) by predicting RTT velocity and pre-emptively switching paths.
+
+- SDP Implementation: `server/lib/burble/security/sdp.ex`
+- AWOL Algorithm: `server/lib/burble/network/awol.ex`
+
+== VeriSimDB & Vext Integrity
+
+[quote, README]
+____
+VeriSimDB ... handled via Burble.Store
+____
+
+VeriSimDB provides native **Provenance** and **Temporal** modalities. Every change to a user account or room config is cryptographically anchored. Because VeriSimDB and the Vext protocol handle internal chain integrity, external blockchain anchoring is redundant and omitted by design.
+
+- Burble Store: `server/lib/burble/store.ex`
+- Integrity Logic: `server/lib/burble/verification/vext.ex`
 
 == Dogfooded Across The Account
 

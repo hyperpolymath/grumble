@@ -132,7 +132,7 @@ let handleUrlChange = (app: t, path: string): unit => {
 
 /// Guest join flow — create guest session and join server.
 let guestJoin = (app: t, ~displayName: string, ~serverId: string): unit => {
-  AuthState.setGuest(app.auth, {guestId: "guest_" ++ serverId, displayName})
+  AuthState.setGuest(app.auth, {guestId: "guest_" ++ serverId, guestName: displayName})
   navigate(app, Server(serverId))
 }
 

@@ -48,6 +48,10 @@ type room = {
   bitrate: int,
 }
 
+type jsObj
+external castToJsObj: {..} => jsObj = "%identity"
+external castFromJsObj: jsObj => {..} = "%identity"
+
 /// Room list sidebar state.
 type t = {
   /// The server ID whose rooms we are displaying.
@@ -63,7 +67,7 @@ type t = {
   /// Whether the user has permission to create rooms.
   mutable canCreateRoom: bool,
   /// The root DOM element for the sidebar (created by render).
-  mutable rootElement: option<{..}>,
+  mutable rootElement: option<jsObj>,
   /// Interval ID for the auto-refresh polling timer.
   mutable refreshIntervalId: option<Nullable.t<float>>,
   /// Callback invoked when the user clicks a room to join.
@@ -89,6 +93,8 @@ external createElement: string => {..} = "createElement"
 
 /// Cancel a recurring timer by its interval ID.
 @val external clearInterval: Nullable.t<float> => unit = "clearInterval"
+
+external castToJsObj: 'a => jsObj = "%identity"
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -119,7 +125,7 @@ let make = (~serverId: string): t => {
 /// The response is expected to be a JSON array of room objects.
 /// On success, updates the rooms array and re-renders.
 /// On failure, sets the error message for display.
-let fetchRooms = async (state: t): unit => {
+let rec fetchRooms = async (state: t): unit => {
   state.isLoading = true
   state.errorMessage = None
 
@@ -171,7 +177,7 @@ let fetchRooms = async (state: t): unit => {
     }
   } catch {
   | exn =>
-    let msg = exn->Exn.message->Option.getOr("Network error")
+    let msg: string = %raw(`(exn => exn.message || "Network error")`)(exn)
     state.errorMessage = Some(msg)
     state.isLoading = false
     Console.error2("[Burble] Room fetch error:", msg)
@@ -246,9 +252,9 @@ and renderRoomItem = (state: t, room: room): {..} => {
     border-radius: 10px;
   `
 
-  header["appendChild"](nameSpan)
-  header["appendChild"](countBadge)
-  item["appendChild"](header)
+  ignore(header["appendChild"](nameSpan))
+  ignore(header["appendChild"](countBadge))
+  ignore(item["appendChild"](header))
 
   // ── Lock indicator ──
   if room.isLocked {
@@ -259,7 +265,7 @@ and renderRoomItem = (state: t, room: room): {..} => {
       font-size: 11px;
       margin-left: 8px;
     `
-    header["appendChild"](lockSpan)
+    ignore(header["appendChild"](lockSpan))
   }
 
   // ── Participant names list ──
@@ -298,17 +304,17 @@ and renderRoomItem = (state: t, room: room): {..} => {
         border-radius: 50%;
         background: ${stateColor};
       `
-      pSpan["appendChild"](dot)
+      ignore(pSpan["appendChild"](dot))
 
       // Display name.
       let nameNode = createElement("span")
       nameNode["textContent"] = p.displayName
-      pSpan["appendChild"](nameNode)
+      ignore(pSpan["appendChild"](nameNode))
 
-      participantList["appendChild"](pSpan)
+      ignore(participantList["appendChild"](pSpan))
     })
 
-    item["appendChild"](participantList)
+    ignore(item["appendChild"](participantList))
   }
 
   // ── Click handler: join the room ──
@@ -355,7 +361,7 @@ and updateDom = (state: t): unit => {
         let loadingEl = createElement("div")
         loadingEl["textContent"] = "Loading rooms..."
         loadingEl["style"]["cssText"] = "color: #888; padding: 12px; text-align: center; font-size: 13px;"
-        listContainer["appendChild"](loadingEl)
+        ignore(listContainer["appendChild"](loadingEl))
       } else {
         switch state.errorMessage {
         | Some(errMsg) =>
@@ -363,19 +369,19 @@ and updateDom = (state: t): unit => {
           let errEl = createElement("div")
           errEl["textContent"] = errMsg
           errEl["style"]["cssText"] = "color: #ff4444; padding: 12px; text-align: center; font-size: 13px;"
-          listContainer["appendChild"](errEl)
+          ignore(listContainer["appendChild"](errEl) )
         | None =>
           if Array.length(state.rooms) == 0 {
             // Empty state.
             let emptyEl = createElement("div")
             emptyEl["textContent"] = "No voice channels"
             emptyEl["style"]["cssText"] = "color: #666; padding: 12px; text-align: center; font-size: 13px;"
-            listContainer["appendChild"](emptyEl)
+            ignore(listContainer["appendChild"](emptyEl))
           } else {
             // Render each room item.
             state.rooms->Array.forEach(room => {
               let item = renderRoomItem(state, room)
-              listContainer["appendChild"](item)
+              ignore(listContainer["appendChild"](item))
             })
           }
         }
@@ -429,7 +435,7 @@ let render = (state: t): {..} => {
     text-transform: uppercase;
     letter-spacing: 0.5px;
   `
-  header["appendChild"](title)
+  ignore(header["appendChild"](title))
 
   // "Create Room" button (visible only if user has permission).
   if state.canCreateRoom {
@@ -454,18 +460,18 @@ let render = (state: t): {..} => {
     }
     createBtn["onmouseenter"] = (_: {..}) => { createBtn["style"]["color"] = "#e0e0e0" }
     createBtn["onmouseleave"] = (_: {..}) => { createBtn["style"]["color"] = "#888" }
-    header["appendChild"](createBtn)
+    ignore(header["appendChild"](createBtn))
   }
 
-  sidebar["appendChild"](header)
+  ignore(sidebar["appendChild"](header))
 
   // ── Room list container (populated by updateDom) ──
   let listContainer = createElement("div")
-  listContainer["setAttribute"]("data-role", "room-list")
+  ignore(listContainer["setAttribute"]("data-role", "room-list"))
   listContainer["style"]["cssText"] = "flex: 1;"
-  sidebar["appendChild"](listContainer)
+  ignore(sidebar["appendChild"](listContainer))
 
-  state.rootElement = Some(sidebar)
+  state.rootElement = Some(castToJsObj(sidebar))
 
   // Initial render of the room items.
   updateDom(state)
@@ -532,11 +538,12 @@ let destroy = (state: t): unit => {
   // Remove the root element from the DOM.
   switch state.rootElement {
   | Some(root) =>
-    let parent: Nullable.t<{..}> = root["parentNode"]
+    let rootObj = castFromJsObj(root)
+    let parent: Nullable.t<{..}> = rootObj["parentNode"]
     let isNull: bool = %raw(`parent === null`)
     if !isNull {
       let p: {..} = %raw(`parent`)
-      p["removeChild"](root)
+      ignore(p["removeChild"](root))
     }
   | None => ()
   }

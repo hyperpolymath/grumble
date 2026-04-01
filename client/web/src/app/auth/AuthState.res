@@ -6,7 +6,7 @@
 // Supports full accounts, guest sessions, and magic link flows.
 
 /// Authentication status.
-type authStatus =
+type rec authStatus =
   | /// Not logged in.
   Anonymous
   | /// Guest session (limited permissions, no persistence).
@@ -17,14 +17,14 @@ type authStatus =
 /// Guest session info.
 and guestInfo = {
   guestId: string,
-  displayName: string,
+  guestName: string,
 }
 
 /// Authenticated user info.
 and userInfo = {
   userId: string,
   email: string,
-  displayName: string,
+  userName: string,
   isAdmin: bool,
   token: string,
 }
@@ -66,8 +66,8 @@ let isAdmin = (state: t): bool =>
 let displayName = (state: t): string =>
   switch state.status {
   | Anonymous => "Anonymous"
-  | Guest({displayName}) => displayName
-  | Authenticated({displayName}) => displayName
+  | Guest({guestName}) => guestName
+  | Authenticated({userName}) => userName
   }
 
 /// Get the user ID (or empty string).

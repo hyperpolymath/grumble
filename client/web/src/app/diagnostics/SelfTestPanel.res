@@ -54,6 +54,10 @@ type selfTestResponse = {
   totalDurationMs: float,
 }
 
+type jsObj
+external castToJsObj: {..} => jsObj = "%identity"
+external castFromJsObj: jsObj => {..} = "%identity"
+
 /// Panel state — tracks the current test run and rendered DOM.
 type t = {
   /// Currently selected test mode.
@@ -65,7 +69,7 @@ type t = {
   /// Error message if the fetch failed.
   mutable errorMessage: option<string>,
   /// The root DOM element for the panel.
-  mutable rootElement: option<{..}>,
+  mutable rootElement: option<jsObj>,
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +189,7 @@ let parseResponse = (json: {..}): selfTestResponse => {
 
 /// Fetch self-test results from the API and update panel state.
 /// Triggers a DOM re-render after completion.
-let runTest = async (panel: t): unit => {
+let rec runTest = async (panel: t): unit => {
   panel.isRunning = true
   panel.errorMessage = None
 
@@ -209,10 +213,10 @@ let runTest = async (panel: t): unit => {
     }
   } catch {
   | exn =>
-    let msg = exn->Exn.message->Option.getOr("Network error")
+    let msg: string = %raw(`(exn => exn.message || "Network error")`)(exn)
     panel.errorMessage = Some(`Fetch failed: ${msg}`)
     panel.lastResponse = None
-    console["error"](`[Burble:SelfTest] ${msg}`)
+    ignore(console["error"](`[Burble:SelfTest] ${msg}`))
   }
 
   panel.isRunning = false
@@ -292,7 +296,7 @@ and makeTestCard = (result: testResult): {..} => {
   let nameEl = createElement("span")
   nameEl["textContent"] = result.name
   nameEl["style"]["cssText"] = "color: #e0e0e0; font-size: 14px; font-weight: 600;"
-  header["appendChild"](nameEl)
+  ignore(header["appendChild"](nameEl))
 
   let badge = createElement("span")
   badge["textContent"] = if result.passed { "PASS" } else { "FAIL" }
@@ -304,8 +308,8 @@ and makeTestCard = (result: testResult): {..} => {
     font-size: 11px;
     font-weight: bold;
   `
-  header["appendChild"](badge)
-  card["appendChild"](header)
+  ignore(header["appendChild"](badge))
+  ignore(card["appendChild"](header))
 
   // ── Timing row ──
   let timing = createElement("div")
@@ -319,13 +323,13 @@ and makeTestCard = (result: testResult): {..} => {
     border-radius: 50%;
     background: ${latencyColor(result.durationMs)};
   `
-  timing["appendChild"](timingDot)
+  ignore(timing["appendChild"](timingDot))
 
   let timingText = createElement("span")
-  timingText["textContent"] = `${Float.toFixedWithPrecision(result.durationMs, ~digits=1)}ms`
+  timingText["textContent"] = `${Float.toFixed(result.durationMs, ~digits=1)}ms`
   timingText["style"]["cssText"] = `color: ${latencyColor(result.durationMs)}; font-size: 12px;`
-  timing["appendChild"](timingText)
-  card["appendChild"](timing)
+  ignore(timing["appendChild"](timingText))
+  ignore(card["appendChild"](timing))
 
   // ── Detail text ──
   if result.detail != "" {
@@ -337,7 +341,7 @@ and makeTestCard = (result: testResult): {..} => {
       line-height: 1.4;
       word-break: break-word;
     `
-    card["appendChild"](detailEl)
+    ignore(card["appendChild"](detailEl))
   }
 
   card
@@ -372,15 +376,15 @@ and makeOverallBanner = (response: selfTestResponse): {..} => {
     font-size: 16px;
     font-weight: bold;
   `
-  banner["appendChild"](statusText)
+  ignore(banner["appendChild"](statusText))
 
   // Show pass/fail counts and total time.
   let passCount = response.tests->Array.filter(t => t.passed)->Array.length
   let totalCount = Array.length(response.tests)
   let summaryText = createElement("span")
-  summaryText["textContent"] = `${Int.toString(passCount)}/${Int.toString(totalCount)} passed in ${Float.toFixedWithPrecision(response.totalDurationMs, ~digits=1)}ms`
+  summaryText["textContent"] = `${Int.toString(passCount)}/${Int.toString(totalCount)} passed in ${Float.toFixed(response.totalDurationMs, ~digits=1)}ms`
   summaryText["style"]["cssText"] = "color: #aaa; font-size: 13px;"
-  banner["appendChild"](summaryText)
+  ignore(banner["appendChild"](summaryText))
 
   banner
 }
@@ -418,12 +422,12 @@ and makeLoadingIndicator = (): {..} => {
     }
   })()`)
 
-  container["appendChild"](spinner)
+  ignore(container["appendChild"](spinner))
 
   let label = createElement("span")
   label["textContent"] = "Running diagnostics..."
   label["style"]["cssText"] = "color: #aaa; font-size: 14px;"
-  container["appendChild"](label)
+  ignore(container["appendChild"](label))
 
   container
 }
@@ -443,12 +447,12 @@ and makeErrorDisplay = (message: string): {..} => {
   let icon = createElement("span")
   icon["textContent"] = "Error: "
   icon["style"]["cssText"] = "color: #ff4444; font-weight: bold;"
-  container["appendChild"](icon)
+  ignore(container["appendChild"](icon))
 
   let text = createElement("span")
   text["textContent"] = message
   text["style"]["cssText"] = "color: #cc8888;"
-  container["appendChild"](text)
+  ignore(container["appendChild"](text))
 
   container
 }
@@ -474,12 +478,12 @@ and updateDom = (panel: t): unit => {
 
       if panel.isRunning {
         // ── Show loading indicator ──
-        contentArea["appendChild"](makeLoadingIndicator())
+        ignore(contentArea["appendChild"](makeLoadingIndicator()))
       } else {
         // ── Show error if present ──
         switch panel.errorMessage {
         | Some(msg) =>
-          contentArea["appendChild"](makeErrorDisplay(msg))
+          ignore(contentArea["appendChild"](makeErrorDisplay(msg)))
         | None => ()
         }
 
@@ -487,7 +491,7 @@ and updateDom = (panel: t): unit => {
         switch panel.lastResponse {
         | Some(response) =>
           // Overall banner.
-          contentArea["appendChild"](makeOverallBanner(response))
+          ignore(contentArea["appendChild"](makeOverallBanner(response)))
 
           // Card grid.
           let grid = createElement("div")
@@ -498,16 +502,16 @@ and updateDom = (panel: t): unit => {
             gap: 10px;
           `
           response.tests->Array.forEach(test => {
-            grid["appendChild"](makeTestCard(test))
+            ignore(grid["appendChild"](makeTestCard(test)))
           })
-          contentArea["appendChild"](grid)
+          ignore(contentArea["appendChild"](grid))
         | None =>
           if panel.errorMessage == None {
             // No results yet and no error — show placeholder.
             let placeholder = createElement("div")
             placeholder["textContent"] = "No test results yet. Select a mode and run."
             placeholder["style"]["cssText"] = "color: #666; text-align: center; padding: 40px;"
-            contentArea["appendChild"](placeholder)
+            ignore(contentArea["appendChild"](placeholder))
           }
         }
       }
@@ -563,7 +567,7 @@ let render = (panel: t): {..} => {
     margin: 0 0 16px 0;
     font-weight: 600;
   `
-  root["appendChild"](title)
+  ignore(root["appendChild"](title))
 
   // ── Mode selector row ──
   let modeRow = createElement("div")
@@ -577,15 +581,15 @@ let render = (panel: t): {..} => {
   let modeLabel_ = createElement("span")
   modeLabel_["textContent"] = "Mode:"
   modeLabel_["style"]["cssText"] = "color: #aaa; font-size: 13px; margin-right: 4px;"
-  modeRow["appendChild"](modeLabel_)
+  ignore(modeRow["appendChild"](modeLabel_))
 
   // Create mode buttons with data-mode attribute for update targeting.
   let modes = [Quick, Voice, Full]
   modes->Array.forEach(mode => {
     let btn = makeModeButton(panel, mode)
-    btn["setAttribute"]("data-role", "mode-btn")
-    btn["setAttribute"]("data-mode", modeToPath(mode))
-    modeRow["appendChild"](btn)
+    ignore(btn["setAttribute"]("data-role", "mode-btn"))
+    ignore(btn["setAttribute"]("data-mode", modeToPath(mode)))
+    ignore(modeRow["appendChild"](btn))
   })
 
   // ── Run Again button ──
@@ -598,16 +602,16 @@ let render = (panel: t): {..} => {
     },
   )
   runAgainBtn["style"]["marginLeft"] = "auto"
-  modeRow["appendChild"](runAgainBtn)
+  ignore(modeRow["appendChild"](runAgainBtn))
 
-  root["appendChild"](modeRow)
+  ignore(root["appendChild"](modeRow))
 
   // ── Content area (populated by updateDom) ──
   let content = createElement("div")
-  content["setAttribute"]("data-role", "content")
-  root["appendChild"](content)
+  ignore(content["setAttribute"]("data-role", "content"))
+  ignore(root["appendChild"](content))
 
-  panel.rootElement = Some(root)
+  panel.rootElement = Some(castToJsObj(root))
 
   // ── Auto-run quick test on panel open ──
   let _ = runTest(panel)
@@ -624,11 +628,12 @@ let destroy = (panel: t): unit => {
   // Remove the root element from the DOM.
   switch panel.rootElement {
   | Some(root) =>
-    let parent: Nullable.t<{..}> = root["parentNode"]
+    let rootObj = castFromJsObj(root)
+    let parent: Nullable.t<{..}> = rootObj["parentNode"]
     let isNull: bool = %raw(`parent === null`)
     if !isNull {
       let p: {..} = %raw(`parent`)
-      p["removeChild"](root)
+      ignore(p["removeChild"](root))
     }
   | None => ()
   }

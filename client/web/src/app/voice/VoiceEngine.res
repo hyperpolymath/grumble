@@ -59,10 +59,14 @@ type audioDevice = {
   kind: string,
 }
 
+type jsObj
+external castToJsObj: {..} => jsObj = "%identity"
+external castFromJsObj: jsObj => {..} = "%identity"
+
 /// Peer audio state — tracks a remote participant's audio playback.
 type peerAudio = {
   /// The HTML Audio element used for playback.
-  mutable audioElement: {..},
+  mutable audioElement: jsObj,
   /// Volume multiplier (0.0 to 2.0, default 1.0).
   mutable volume: float,
   /// The peer's user ID for presence correlation.
@@ -123,15 +127,15 @@ type t = {
   /// Whether PTT key is currently held down.
   mutable pttKeyDown: bool,
   /// WebRTC PeerConnection (opaque browser object).
-  mutable peerConnection: option<{..}>,
+  mutable peerConnection: option<jsObj>,
   /// Local MediaStream from getUserMedia.
-  mutable localStream: option<{..}>,
+  mutable localStream: option<jsObj>,
   /// AudioContext for level monitoring and coprocessor pipeline.
-  mutable audioContext: option<{..}>,
+  mutable audioContext: option<jsObj>,
   /// AnalyserNode for FFT-based audio level computation.
-  mutable analyserNode: option<{..}>,
+  mutable analyserNode: option<jsObj>,
   /// GainNode used by the coprocessor pipeline for noise gating.
-  mutable noiseGateNode: option<{..}>,
+  mutable noiseGateNode: option<jsObj>,
   /// Interval ID for the audio level polling timer.
   mutable levelIntervalId: option<Nullable.t<float>>,
   /// Phoenix channel for the current voice room (signaling transport).
@@ -268,7 +272,7 @@ let handleKeyDown = (engine: t, event: {..}): unit => {
     // Enable local audio tracks when PTT key is pressed.
     switch engine.localStream {
     | Some(stream) =>
-      let tracks: array<{..}> = stream["getAudioTracks"]()
+      let tracks: array<{..}> = castFromJsObj(stream)["getAudioTracks"]()
       tracks->Array.forEach(track => {
         track["enabled"] = engine.voiceState == Active
       })
@@ -286,7 +290,7 @@ let handleKeyUp = (engine: t, event: {..}): unit => {
     // Disable local audio tracks when PTT key is released.
     switch engine.localStream {
     | Some(stream) =>
-      let tracks: array<{..}> = stream["getAudioTracks"]()
+      let tracks: array<{..}> = castFromJsObj(stream)["getAudioTracks"]()
       tracks->Array.forEach(track => {
         track["enabled"] = false
       })
@@ -323,11 +327,11 @@ let startAudioLevelMonitoring = (engine: t): unit => {
       gainNode["gain"]["value"] = 1.0
       source["connect"](gainNode)
       gainNode["connect"](ctx["destination"])
-      engine.noiseGateNode = Some(gainNode)
+      engine.noiseGateNode = Some(castToJsObj(gainNode))
     }
 
-    engine.audioContext = Some(ctx)
-    engine.analyserNode = Some(analyser)
+    engine.audioContext = Some(castToJsObj(ctx))
+    engine.analyserNode = Some(castToJsObj(analyser))
 
     // Poll audio level every 50ms using a typed interval.
     let intervalId = setInterval(() => {
@@ -347,14 +351,14 @@ let startAudioLevelMonitoring = (engine: t): unit => {
       // if audio is below the noise gate threshold, silence the gain.
       switch engine.noiseGateNode {
       | Some(gainNode) =>
+        let gn = castFromJsObj(gainNode)
         if avg < engine.config.noiseGateThreshold {
-          gainNode["gain"]["value"] = 0.0
+          gn["gain"]["value"] = 0.0
         } else {
-          gainNode["gain"]["value"] = 1.0
+          gn["gain"]["value"] = 1.0
         }
       | None => ()
       }
-
       // VAD: detect speaking transitions.
       let wasSpeaking = engine.isSpeaking
 
@@ -401,8 +405,7 @@ let applyPeerVolume = (engine: t, peerId: string): unit => {
   | Some(peer) =>
     let vol = Dict.get(engine.peerVolumes, peerId)->Option.getOr(1.0)
     let clamped = Math.max(0.0, Math.min(2.0, vol))
-    peer.audioElement["volume"] = clamped
-  | None => ()
+    castFromJsObj(peer.audioElement)["volume"] = clamped  | None => ()
   }
 }
 
@@ -417,7 +420,7 @@ let addPeerAudio = (engine: t, peerId: string, stream: {..}): unit => {
   audio["srcObject"] = stream
 
   let peer: peerAudio = {
-    audioElement: audio,
+    audioElement: castToJsObj(audio),
     volume: 1.0,
     peerId,
   }
@@ -434,8 +437,9 @@ let addPeerAudio = (engine: t, peerId: string, stream: {..}): unit => {
 let removePeerAudio = (engine: t, peerId: string): unit => {
   switch Dict.get(engine.peerAudios, peerId) {
   | Some(peer) =>
-    peer.audioElement["pause"]()
-    peer.audioElement["srcObject"] = Nullable.null
+    let el = castFromJsObj(peer.audioElement)
+    ignore(el["pause"]())
+    el["srcObject"] = Nullable.null
     Dict.delete(engine.peerAudios, peerId)
   | None => ()
   }
@@ -533,7 +537,7 @@ let setupChannelListeners = (engine: t, ch: PhoenixSocket.channel): unit => {
     let peerId: string = %raw(`payload.peer_id || ""`)
     let speaking: bool = %raw(`!!payload.speaking`)
     switch engine.onPeerSpeaking {
-    | Some(cb) => cb((peerId, speaking))
+    | Some(cb) => cb(peerId, speaking)
     | None => ()
     }
     ignore(payload)
@@ -586,28 +590,25 @@ let connect = async (engine: t, ~roomId: string, ~token: string): result<unit, s
 
   try {
     let stream = await getUserMedia(constraints)
-    engine.localStream = Some(stream)
+    engine.localStream = Some(castToJsObj(stream))
 
     // 4. Create PeerConnection with ICE configuration.
     // In privacy mode ("turn_only"), force relay-only ICE to prevent
     // IP address leakage through STUN.
     let iceConfig = switch engine.config.privacyMode {
-    | "standard" => {"iceServers": [{"urls": "stun:stun.l.google.com:19302"}]}
-    | _ => {
-        "iceServers": [{"urls": "stun:stun.l.google.com:19302"}],
-        "iceTransportPolicy": "relay",
-      }
+    | "standard" => %raw(`{ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }`)
+    | _ => %raw(`{ iceServers: [{ urls: "stun:stun.l.google.com:19302" }], iceTransportPolicy: "relay" }`)
     }
 
     let pc = makeRTCPeerConnection(iceConfig)
-    engine.peerConnection = Some(pc)
+    engine.peerConnection = Some(castToJsObj(pc))
 
     // 5. Add local audio tracks to the PeerConnection.
     // Each track is associated with the local stream for proper cleanup.
-    let tracks: array<{..}> = stream["getAudioTracks"]()
-    tracks->Array.forEach(track => {
-      pc["addTrack"](track, stream)
-    })
+    let _ = %raw(`(pc, stream) => {
+      const tracks = stream.getAudioTracks();
+      tracks.forEach(track => pc.addTrack(track, stream));
+    }`)(pc, stream)
 
     // 6a. Handle outgoing ICE candidates — forward to server via channel.
     pc["onicecandidate"] = (event: {..}) => {
@@ -627,13 +628,12 @@ let connect = async (engine: t, ~roomId: string, ~token: string): result<unit, s
     // Each track event creates an Audio element for playback.
     pc["ontrack"] = (event: {..}) => {
       let remoteStreams: array<{..}> = event["streams"]
-      if Array.length(remoteStreams) > 0 {
+      remoteStreams->Array.get(0)->Option.forEach(stream => {
         // Extract peer ID from the track's stream ID (SFU convention).
-        let streamId: string = remoteStreams[0]["id"]
+        let streamId: string = stream["id"]
         let peerId = streamId
-        addPeerAudio(engine, peerId, remoteStreams[0])
-      }
-    }
+        addPeerAudio(engine, peerId, stream)
+      })    }
 
     // 6c. Handle PeerConnection state changes for lifecycle management.
     pc["onconnectionstatechange"] = (_: {..}) => {
@@ -853,7 +853,7 @@ let toggleMute = (engine: t): voiceState => {
   // Mute/unmute local audio tracks to match voice state.
   switch engine.localStream {
   | Some(stream) =>
-    let tracks: array<{..}> = stream["getAudioTracks"]()
+    let tracks: array<{..}> = castFromJsObj(stream)["getAudioTracks"]()
     let enabled = engine.voiceState == Active
     tracks->Array.forEach(track => { track["enabled"] = enabled })
   | None => ()
@@ -900,7 +900,7 @@ let toggleDeafen = (engine: t): voiceState => {
   // Mute/unmute local tracks.
   switch engine.localStream {
   | Some(stream) =>
-    let tracks: array<{..}> = stream["getAudioTracks"]()
+    let tracks: array<{..}> = castFromJsObj(stream)["getAudioTracks"]()
     tracks->Array.forEach(track => {
       track["enabled"] = !isDeafened
     })
@@ -942,7 +942,7 @@ let setInputMode = (engine: t, mode: inputMode): unit => {
     // In PTT mode, start with tracks disabled.
     switch engine.localStream {
     | Some(stream) =>
-      let tracks: array<{..}> = stream["getAudioTracks"]()
+      let tracks: array<{..}> = castFromJsObj(stream)["getAudioTracks"]()
       tracks->Array.forEach(track => {
         track["enabled"] = false
       })
@@ -952,7 +952,7 @@ let setInputMode = (engine: t, mode: inputMode): unit => {
     // In VAD mode, re-enable tracks (unless muted/deafened).
     switch engine.localStream {
     | Some(stream) =>
-      let tracks: array<{..}> = stream["getAudioTracks"]()
+      let tracks: array<{..}> = castFromJsObj(stream)["getAudioTracks"]()
       let enabled = engine.voiceState == Active
       tracks->Array.forEach(track => {
         track["enabled"] = enabled

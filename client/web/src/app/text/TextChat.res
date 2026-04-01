@@ -115,8 +115,8 @@ let fetchMessages = async (
     Ok(parsed)
   } catch {
   | exn =>
-    let msg = exn->Exn.message->Option.getOr("Failed to fetch messages")
-    Error(msg)
+    let errMsg: string = %raw(`(exn => exn.message || "Failed to fetch messages")`)(exn)
+    Error(errMsg)
   }
 }
 
@@ -163,7 +163,7 @@ let sendMessageViaApi = async (
     Ok(msg)
   } catch {
   | exn =>
-    let errMsg = exn->Exn.message->Option.getOr("Failed to send message")
+    let errMsg: string = %raw(`(exn => exn.message || "Failed to send message")`)(exn)
     Error(errMsg)
   }
 }
@@ -181,9 +181,9 @@ let sendMessageViaChannel = (
   state: chatState,
   ~body: string,
 ): unit => {
-  let payload: {..} = switch state.replyTo {
-  | Some(replyId) => {"body": body, "reply_to": replyId}
-  | None => {"body": body}
+  let payload = switch state.replyTo {
+  | Some(replyId) => %raw(`{ body: body, reply_to: replyId }`)
+  | None => %raw(`{ body: body }`)
   }
 
   PhoenixSocket.push(channel, "text", payload)
@@ -191,57 +191,6 @@ let sendMessageViaChannel = (
   // Clear reply-to after sending.
   state.replyTo = None
   state.inputValue = ""
-}
-
-/// Subscribe to incoming text messages on the channel.
-///
-/// Parses inbound "text" events and appends them to the message list.
-let subscribeToMessages = (channel: PhoenixSocket.channel, state: chatState): unit => {
-  PhoenixSocket.on(channel, "text", (payload: JSON.t) => {
-    let msg = parseMessageFromJson(payload)
-    switch msg {
-    | Some(m) =>
-      state.messages = Array.concat(state.messages, [m])
-    | None => ()
-    }
-  })
-}
-
-/// Subscribe to pinned message updates.
-let subscribeToPins = (channel: PhoenixSocket.channel, state: chatState): unit => {
-  PhoenixSocket.on(channel, "message_pinned", (payload: JSON.t) => {
-    let pinnedId = switch payload {
-    | Object(obj) =>
-      switch obj->Dict.get("message_id") {
-      | Some(String(s)) => Some(s)
-      | _ => None
-      }
-    | _ => None
-    }
-
-    switch pinnedId {
-    | Some(id) =>
-      // Mark the message as pinned in the list.
-      state.messages = state.messages->Array.map(m =>
-        if m.messageId == id {
-          {...m, isPinned: true}
-        } else {
-          m
-        }
-      )
-
-      // Add to pinned list if not already there.
-      let alreadyPinned = state.pinnedMessages->Array.some(m => m.messageId == id)
-      if !alreadyPinned {
-        switch state.messages->Array.find(m => m.messageId == id) {
-        | Some(m) =>
-          state.pinnedMessages = Array.concat(state.pinnedMessages, [{...m, isPinned: true}])
-        | None => ()
-        }
-      }
-    | None => ()
-    }
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +232,20 @@ let parseMessageFromJson = (json: JSON.t): option<message> => {
     })
   | _ => None
   }
+}
+
+/// Subscribe to incoming text messages on the channel.
+///
+/// Parses inbound "text" events and appends them to the message list.
+let subscribeToMessages = (channel: PhoenixSocket.channel, state: chatState): unit => {
+  PhoenixSocket.on(channel, "text", (payload: JSON.t) => {
+    let msg = parseMessageFromJson(payload)
+    switch msg {
+    | Some(m) =>
+      state.messages = Array.concat(state.messages, [m])
+    | None => ()
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -333,12 +296,7 @@ let isReply = (msg: message): bool => {
 
 /// Get the parent message ID (last reference in the chain).
 let parentId = (msg: message): option<string> => {
-  let len = Array.length(msg.references)
-  if len > 0 {
-    Some(msg.references[len - 1])
-  } else {
-    None
-  }
+  msg.references->Array.get(Array.length(msg.references) - 1)
 }
 
 /// Get all replies to a given message ID.
@@ -388,6 +346,43 @@ let formatTimestamp = (iso: string): string => {
 // ---------------------------------------------------------------------------
 // State management
 // ---------------------------------------------------------------------------
+
+/// Subscribe to pinned message updates.
+let subscribeToPins = (channel: PhoenixSocket.channel, state: chatState): unit => {
+  PhoenixSocket.on(channel, "message_pinned", (payload: JSON.t) => {
+    let pinnedId = switch payload {
+    | Object(obj) =>
+      switch obj->Dict.get("message_id") {
+      | Some(String(s)) => Some(s)
+      | _ => None
+      }
+    | _ => None
+    }
+
+    switch pinnedId {
+    | Some(id) =>
+      // Mark the message as pinned in the list.
+      state.messages = state.messages->Array.map(m =>
+        if m.messageId == id {
+          {...m, isPinned: true}
+        } else {
+          m
+        }
+      )
+
+      // Add to pinned list if not already there.
+      let alreadyPinned = state.pinnedMessages->Array.some(m => m.messageId == id)
+      if !alreadyPinned {
+        switch state.messages->Array.find(m => m.messageId == id) {
+        | Some(m) =>
+          state.pinnedMessages = Array.concat(state.pinnedMessages, [{...m, isPinned: true}])
+        | None => ()
+        }
+      }
+    | None => ()
+    }
+  })
+}
 
 /// Load initial messages from the API and set up channel subscriptions.
 let initialize = async (

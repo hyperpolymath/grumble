@@ -44,18 +44,22 @@ let defaultConstraints: videoConstraints = {
   maxFramerate: 15,
 }
 
+type jsObj
+external castToJsObj: {..} => jsObj = "%identity"
+external castFromJsObj: jsObj => {..} = "%identity"
+
 /// Screen share engine state (mutable, managed internally).
 type t = {
   mutable state: shareState,
   mutable constraints: videoConstraints,
   /// Local capture stream from getDisplayMedia.
-  mutable localStream: option<{..}>,
+  mutable localStream: option<jsObj>,
   /// PeerConnection for the screen share video track (separate from voice).
-  mutable peerConnection: option<{..}>,
+  mutable peerConnection: option<jsObj>,
   /// Callback: state changed.
   mutable onStateChange: option<shareState => unit>,
   /// Callback: remote stream available for display.
-  mutable onRemoteStream: option<{..} => unit>,
+  mutable onRemoteStream: option<jsObj => unit>,
   /// Channel send functions (set externally by the room/channel layer).
   mutable sendStartShare: option<unit => unit>,
   mutable sendStopShare: option<unit => unit>,
@@ -107,7 +111,7 @@ let make = (~constraints: videoConstraints=defaultConstraints): t => {
 /// 3. Creates a PeerConnection for the video track.
 /// 4. Listens for the "ended" event on the video track (user clicks
 ///    the browser's "Stop sharing" button).
-let startSharing = async (engine: t): result<unit, string> => {
+let rec startSharing = async (engine: t): result<unit, string> => {
   engine.state = Starting
   notifyState(engine)
 
@@ -125,18 +129,17 @@ let startSharing = async (engine: t): result<unit, string> => {
   try {
     // Prompt user to pick a screen/window/tab.
     let stream = await getDisplayMedia(displayConstraints)
-    engine.localStream = Some(stream)
+    engine.localStream = Some(castToJsObj(stream))
 
     // Listen for the browser "Stop sharing" button.
     let videoTracks: array<{..}> = stream["getVideoTracks"]()
-    if Array.length(videoTracks) > 0 {
-      let track = videoTracks[0]
+    videoTracks->Array.get(0)->Option.forEach(track => {
       // When the user clicks "Stop sharing" in the browser chrome,
       // the track fires an "ended" event. We clean up automatically.
       track["onended"] = (_: {..}) => {
         stopSharing(engine)
       }
-    }
+    })
 
     // Notify the server that we want to share.
     switch engine.sendStartShare {
@@ -150,7 +153,7 @@ let startSharing = async (engine: t): result<unit, string> => {
   } catch {
   | exn =>
     // User cancelled the picker or permission denied.
-    let msg = exn->Exn.message->Option.getOr("Screen share cancelled")
+    let msg: string = %raw(`(exn => exn.message || "Screen share cancelled")`)(exn)
     engine.state = Error(msg)
     notifyState(engine)
     Error(msg)
@@ -161,18 +164,19 @@ let startSharing = async (engine: t): result<unit, string> => {
 ///
 /// Stops all local capture tracks, closes the PeerConnection,
 /// and notifies the server.
-let stopSharing = (engine: t): unit => {
+and stopSharing = (engine: t): unit => {
   // Stop local capture tracks.
   switch engine.localStream {
   | Some(stream) =>
-    let tracks: array<{..}> = stream["getTracks"]()
-    tracks->Array.forEach(track => track["stop"]())
+    let streamObj = castFromJsObj(stream)
+    let tracks: array<{..}> = streamObj["getTracks"]()
+    tracks->Array.forEach(track => ignore(track["stop"]()))
   | None => ()
   }
 
   // Close the screen share PeerConnection.
   switch engine.peerConnection {
-  | Some(pc) => pc["close"]()
+  | Some(pc) => ignore(castFromJsObj(pc)["close"]())
   | None => ()
   }
 
@@ -195,7 +199,7 @@ let stopSharing = (engine: t): unit => {
 /// Handle "screen_share:started" from server — another peer started sharing.
 ///
 /// Sets state to Viewing and prepares to receive the remote video stream.
-let handleRemoteShareStarted = (engine: t, sharerPeerId: string): unit => {
+and handleRemoteShareStarted = (engine: t, sharerPeerId: string): unit => {
   // Only update if we're not the sharer ourselves.
   switch engine.state {
   | Sharing => () // We're the sharer; ignore.
@@ -206,7 +210,7 @@ let handleRemoteShareStarted = (engine: t, sharerPeerId: string): unit => {
 }
 
 /// Handle "screen_share:stopped" from server — the active share ended.
-let handleRemoteShareStopped = (engine: t): unit => {
+and handleRemoteShareStopped = (engine: t): unit => {
   switch engine.state {
   | Viewing(_) =>
     engine.state = Idle
@@ -219,15 +223,15 @@ let handleRemoteShareStopped = (engine: t): unit => {
 ///
 /// Called by the WebRTC ontrack event when the SFU forwards the screen
 /// share video to us. Passes the stream to onRemoteStream for rendering.
-let handleRemoteTrack = (engine: t, stream: {..}): unit => {
+and handleRemoteTrack = (engine: t, stream: {..}): unit => {
   switch engine.onRemoteStream {
-  | Some(cb) => cb(stream)
+  | Some(cb) => cb(castToJsObj(stream))
   | None => ()
   }
 }
 
 /// Handle SDP offer for screen share track from the server.
-let handleSdpOffer = async (engine: t, sdp: string): unit => {
+and handleSdpOffer = async (engine: t, sdp: string): unit => {
   switch engine.peerConnection {
   | Some(pc) =>
     try {
@@ -238,7 +242,8 @@ let handleSdpOffer = async (engine: t, sdp: string): unit => {
         return answer.sdp;
       })()`)
 
-      let answerSdp: string = pc["localDescription"]["sdp"]
+      let pcObj = castFromJsObj(pc)
+      let answerSdp: string = pcObj["localDescription"]["sdp"]
 
       switch engine.sendSignal {
       | Some(send) => send(answerSdp)
@@ -256,7 +261,7 @@ let handleSdpOffer = async (engine: t, sdp: string): unit => {
 // ---------------------------------------------------------------------------
 
 /// Label for the share button based on current state.
-let shareButtonLabel = (engine: t): string =>
+and shareButtonLabel = (engine: t): string =>
   switch engine.state {
   | Idle => "Share Screen"
   | Starting => "Starting..."
@@ -266,21 +271,21 @@ let shareButtonLabel = (engine: t): string =>
   }
 
 /// Whether the share button should be disabled.
-let shareButtonDisabled = (engine: t): bool =>
+and shareButtonDisabled = (engine: t): bool =>
   switch engine.state {
   | Starting => true
   | _ => false
   }
 
 /// Whether we are currently the active sharer.
-let isSharing = (engine: t): bool =>
+and isSharing = (engine: t): bool =>
   switch engine.state {
   | Sharing => true
   | _ => false
   }
 
 /// Whether we are viewing someone else's screen share.
-let isViewing = (engine: t): bool =>
+and isViewing = (engine: t): bool =>
   switch engine.state {
   | Viewing(_) => true
   | _ => false
@@ -288,14 +293,14 @@ let isViewing = (engine: t): bool =>
 
 /// Get the local capture stream for preview rendering.
 /// Returns None if we're not sharing.
-let getLocalStream = (engine: t): option<{..}> =>
+and getLocalStream = (engine: t): option<jsObj> =>
   switch engine.state {
   | Sharing => engine.localStream
   | _ => None
   }
 
 /// Toggle: start if idle, stop if sharing.
-let toggle = async (engine: t): unit => {
+and toggle = async (engine: t): unit => {
   switch engine.state {
   | Idle | Error(_) =>
     let _ = await startSharing(engine)
@@ -312,7 +317,7 @@ let toggle = async (engine: t): unit => {
 // ---------------------------------------------------------------------------
 
 /// Notify the state change callback if registered.
-let notifyState = (engine: t): unit => {
+and notifyState = (engine: t): unit => {
   switch engine.onStateChange {
   | Some(cb) => cb(engine.state)
   | None => ()

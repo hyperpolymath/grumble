@@ -50,6 +50,8 @@ type audioDevice = {
   kind: string,
 }
 
+type jsObj
+
 /// Wizard state — tracks progress, selections, and test results.
 type t = {
   /// Current wizard step.
@@ -79,15 +81,15 @@ type t = {
   /// Error message from any step (displayed to user).
   mutable errorMessage: option<string>,
   /// The root DOM element for the wizard overlay.
-  mutable rootElement: option<{..}>,
+  mutable rootElement: option<jsObj>,
   /// The local MediaStream used for microphone testing.
-  mutable testStream: option<{..}>,
+  mutable testStream: option<jsObj>,
   /// AudioContext for microphone level monitoring and tone generation.
-  mutable audioContext: option<{..}>,
+  mutable audioContext: option<jsObj>,
   /// Interval ID for the microphone level polling timer.
   mutable levelIntervalId: option<float>,
   /// The OscillatorNode used for the speaker test tone.
-  mutable oscillator: option<{..}>,
+  mutable oscillator: option<jsObj>,
   /// Animation frame ID for mic test level updates.
   mutable rafId: option<int>,
   /// Callback invoked when the wizard completes successfully.
@@ -275,16 +277,19 @@ let markSetupComplete = (): unit => {
 // Media device enumeration
 // ---------------------------------------------------------------------------
 
+external castToJsObj: {..} => jsObj = "%identity"
+external castFromJsObj: jsObj => {..} = "%identity"
+
 /// Request audio permission and enumerate available devices.
 /// Populates inputDevices and outputDevices arrays.
-let enumerateDevices = async (wizard: t): unit => {
+let rec enumerateDevices = async (wizard: t): unit => {
   try {
     // Request microphone permission first — needed for device labels.
     let stream: {..} = await %raw(`navigator.mediaDevices.getUserMedia({ audio: true })`)
     wizard.permissionGranted = true
 
     // Store the stream temporarily for cleanup.
-    wizard.testStream = Some(stream)
+    wizard.testStream = Some(castToJsObj(stream))
 
     // Enumerate all media devices.
     let devices: array<{..}> = await %raw(`navigator.mediaDevices.enumerateDevices()`)
@@ -318,11 +323,11 @@ let enumerateDevices = async (wizard: t): unit => {
     wizard.outputDevices = outputs
 
     // Select defaults if nothing was previously selected.
-    if wizard.selectedInputId == "" && Array.length(inputs) > 0 {
-      wizard.selectedInputId = inputs[0].deviceId
+    if wizard.selectedInputId == "" {
+      inputs->Array.get(0)->Option.forEach(d => wizard.selectedInputId = d.deviceId)
     }
-    if wizard.selectedOutputId == "" && Array.length(outputs) > 0 {
-      wizard.selectedOutputId = outputs[0].deviceId
+    if wizard.selectedOutputId == "" {
+      outputs->Array.get(0)->Option.forEach(d => wizard.selectedOutputId = d.deviceId)
     }
 
     // Restore previous selections from localStorage.
@@ -343,7 +348,7 @@ let enumerateDevices = async (wizard: t): unit => {
     console["log"](`[Burble:Setup] Found ${Int.toString(Array.length(inputs))} inputs, ${Int.toString(Array.length(outputs))} outputs`)
   } catch {
   | exn =>
-    let msg = exn->Exn.message->Option.getOr("Permission denied")
+    let msg: string = %raw(`(exn => exn.message || "Error")`)(exn)
     wizard.errorMessage = Some(`Microphone access failed: ${msg}`)
     wizard.permissionGranted = false
     console["error"](`[Burble:Setup] ${msg}`)
@@ -356,7 +361,7 @@ let enumerateDevices = async (wizard: t): unit => {
 
 /// Start the microphone test. Creates an AudioContext and AnalyserNode
 /// to monitor the selected input device's audio level in real time.
-let startMicTest = async (wizard: t): unit => {
+and startMicTest = async (wizard: t): unit => {
   // Stop any existing test first.
   stopMicTest(wizard)
 
@@ -368,15 +373,15 @@ let startMicTest = async (wizard: t): unit => {
       %raw(`({ audio: true })`)
     }
     let stream: {..} = await %raw(`navigator.mediaDevices.getUserMedia(constraints)`)
-    wizard.testStream = Some(stream)
+    wizard.testStream = Some(castToJsObj(stream))
 
     let ctx = makeAudioContext()
-    wizard.audioContext = Some(ctx)
+    wizard.audioContext = Some(castToJsObj(ctx))
 
     let source = ctx["createMediaStreamSource"](stream)
     let analyser = ctx["createAnalyser"]()
     analyser["fftSize"] = 256
-    source["connect"](analyser)
+    ignore(source["connect"](analyser))
 
     wizard.micTestRunning = true
 
@@ -398,7 +403,7 @@ let startMicTest = async (wizard: t): unit => {
     wizard.levelIntervalId = Some(intervalId)
   } catch {
   | exn =>
-    let msg = exn->Exn.message->Option.getOr("Microphone test failed")
+    let msg: string = %raw(`(exn => exn.message || "Error")`)(exn)
     wizard.errorMessage = Some(msg)
   }
 }
@@ -417,8 +422,9 @@ and stopMicTest = (wizard: t): unit => {
   // Stop the test stream tracks.
   switch wizard.testStream {
   | Some(stream) =>
-    let tracks: array<{..}> = stream["getTracks"]()
-    tracks->Array.forEach(track => track["stop"]())
+    let streamObj = castFromJsObj(stream)
+    let tracks: array<{..}> = streamObj["getTracks"]()
+    tracks->Array.forEach(track => ignore(track["stop"]()))
   | None => ()
   }
   wizard.testStream = None
@@ -462,7 +468,7 @@ and updateMicLevelDom = (wizard: t): unit => {
 
 /// Play a 440Hz test tone through the selected output device.
 /// The tone plays for testToneDuration seconds then stops automatically.
-let playTestTone = (wizard: t): unit => {
+and playTestTone = (wizard: t): unit => {
   // Stop any existing tone first.
   stopTestTone(wizard)
 
@@ -470,33 +476,35 @@ let playTestTone = (wizard: t): unit => {
   | Some(ctx) => ctx
   | None =>
     let ctx = makeAudioContext()
-    wizard.audioContext = Some(ctx)
-    ctx
+    wizard.audioContext = Some(castToJsObj(ctx))
+    castToJsObj(ctx)
   }
 
-  let oscillator = ctx["createOscillator"]()
+  let ctxObj = castFromJsObj(ctx)
+  let oscillator = ctxObj["createOscillator"]()
   oscillator["type"] = "sine"
-  oscillator["frequency"]["setValueAtTime"](testToneHz, ctx["currentTime"])
+  oscillator["frequency"]["setValueAtTime"](testToneHz, ctxObj["currentTime"])
 
   // Use a gain node to control volume (avoid blasting the user).
-  let gain = ctx["createGain"]()
-  gain["gain"]["setValueAtTime"](0.3, ctx["currentTime"])
+  let gain = ctxObj["createGain"]()
+  gain["gain"]["setValueAtTime"](0.3, ctxObj["currentTime"])
 
-  oscillator["connect"](gain)
-  gain["connect"](ctx["destination"])
+  ignore(oscillator["connect"](gain))
+  ignore(gain["connect"](ctxObj["destination"]))
 
-  oscillator["start"]()
-  wizard.oscillator = Some(oscillator)
+  ignore(oscillator["start"]())
+  wizard.oscillator = Some(castToJsObj(oscillator))
   wizard.speakerTestPlaying = true
 
+  let stopAt = Float.toString(testToneDuration)
   // Auto-stop after the test duration.
-  let _: unit = %raw(`(() => {
-    oscillator.stop(ctx.currentTime + ${Float.toString(testToneDuration)});
+  let _: unit = %raw(`((stopAt) => {
+    oscillator.stop(ctx.currentTime + parseFloat(stopAt));
     oscillator.onended = () => {
       wizard.speakerTestPlaying = false;
       wizard.oscillator = undefined;
     };
-  })()`)
+  })(stopAt)`)
   ignore(oscillator)
 }
 
@@ -518,7 +526,7 @@ and stopTestTone = (wizard: t): unit => {
 
 /// Run a quick network connectivity test by fetching the self-test endpoint.
 /// Measures round-trip latency and checks for a successful response.
-let runNetworkTest = async (wizard: t): unit => {
+and runNetworkTest = async (wizard: t): unit => {
   wizard.networkTestRunning = true
   wizard.networkTestResult = None
   wizard.networkTestLatency = None
@@ -544,7 +552,7 @@ let runNetworkTest = async (wizard: t): unit => {
     }
   } catch {
   | exn =>
-    let msg = exn->Exn.message->Option.getOr("Network error")
+    let msg: string = %raw(`(exn => exn.message || "Error")`)(exn)
     wizard.networkTestResult = Some(false)
     wizard.errorMessage = Some(`Connection failed: ${msg}`)
   }
@@ -627,7 +635,7 @@ and makeDeviceSelector = (
     if device.deviceId == selectedId {
       opt["selected"] = true
     }
-    select["appendChild"](opt)
+    ignore(select["appendChild"](opt))
   })
 
   select["onchange"] = (_: {..}) => {
@@ -654,7 +662,7 @@ and makeLevelMeter = (): {..} => {
   `
 
   let fill = createElement("div")
-  fill["setAttribute"]("data-role", "mic-level-fill")
+  ignore(fill["setAttribute"]("data-role", "mic-level-fill"))
   fill["style"]["cssText"] = `
     width: 0%;
     height: 100%;
@@ -662,7 +670,7 @@ and makeLevelMeter = (): {..} => {
     border-radius: 6px;
     transition: width 0.05s linear;
   `
-  container["appendChild"](fill)
+  ignore(container["appendChild"](fill))
 
   container
 }
@@ -706,7 +714,7 @@ and makeStepper = (currentIdx: int): {..} => {
       color: ${if i <= currentIdx { "#fff" } else { "#666" }};
     `
     circle["textContent"] = Int.toString(i)
-    stepper["appendChild"](circle)
+    ignore(stepper["appendChild"](circle))
 
     // Add a connecting line between circles (except after the last).
     if i < totalSteps {
@@ -718,7 +726,7 @@ and makeStepper = (currentIdx: int): {..} => {
         background: ${lineColor};
         align-self: center;
       `
-      stepper["appendChild"](line)
+      ignore(stepper["appendChild"](line))
     }
   }
 
@@ -738,7 +746,7 @@ and buildWelcomeContent = (wizard: t): {..} => {
   let desc = createElement("p")
   desc["textContent"] = stepDescription(Welcome)
   desc["style"]["cssText"] = "color: #aaa; font-size: 15px; line-height: 1.6; margin-bottom: 24px;"
-  content["appendChild"](desc)
+  ignore(content["appendChild"](desc))
 
   if wizard.permissionGranted {
     let badge = createElement("div")
@@ -753,7 +761,7 @@ and buildWelcomeContent = (wizard: t): {..} => {
       font-weight: 600;
       border: 1px solid #2a6a2a;
     `
-    content["appendChild"](badge)
+    ignore(content["appendChild"](badge))
   } else {
     let permBtn = makePrimaryButton(
       ~text="Grant Microphone Access",
@@ -770,7 +778,7 @@ and buildWelcomeContent = (wizard: t): {..} => {
         ignore(enumerateDevices(wizard))
       },
     )
-    content["appendChild"](permBtn)
+    ignore(content["appendChild"](permBtn))
   }
 
   // Show error if permission was denied.
@@ -779,7 +787,7 @@ and buildWelcomeContent = (wizard: t): {..} => {
     let err = createElement("p")
     err["textContent"] = msg
     err["style"]["cssText"] = "color: #ff4444; font-size: 13px; margin-top: 16px;"
-    content["appendChild"](err)
+    ignore(content["appendChild"](err))
   | None => ()
   }
 
@@ -794,14 +802,13 @@ and buildSelectInputContent = (wizard: t): {..} => {
   let desc = createElement("p")
   desc["textContent"] = stepDescription(SelectInput)
   desc["style"]["cssText"] = "color: #aaa; font-size: 14px; margin-bottom: 16px;"
-  content["appendChild"](desc)
+  ignore(content["appendChild"](desc))
 
   if Array.length(wizard.inputDevices) == 0 {
     let noDevices = createElement("p")
     noDevices["textContent"] = "No microphones detected. Please connect a microphone and go back to grant permission again."
     noDevices["style"]["cssText"] = "color: #ff8844; font-size: 14px;"
-    content["appendChild"](noDevices)
-  } else {
+    ignore(content["appendChild"](noDevices) ) } else {
     let selector = makeDeviceSelector(
       wizard.inputDevices,
       wizard.selectedInputId,
@@ -810,7 +817,7 @@ and buildSelectInputContent = (wizard: t): {..} => {
         localStorage["setItem"](inputDeviceKey, id)
       },
     )
-    content["appendChild"](selector)
+    ignore(content["appendChild"](selector))
   }
 
   content
@@ -824,13 +831,13 @@ and buildSelectOutputContent = (wizard: t): {..} => {
   let desc = createElement("p")
   desc["textContent"] = stepDescription(SelectOutput)
   desc["style"]["cssText"] = "color: #aaa; font-size: 14px; margin-bottom: 16px;"
-  content["appendChild"](desc)
+  ignore(content["appendChild"](desc))
 
   if Array.length(wizard.outputDevices) == 0 {
     let noDevices = createElement("p")
     noDevices["textContent"] = "No output devices detected. Your browser may not support output device selection. The default device will be used."
     noDevices["style"]["cssText"] = "color: #ff8844; font-size: 14px;"
-    content["appendChild"](noDevices)
+    ignore(content["appendChild"](noDevices))
   } else {
     let selector = makeDeviceSelector(
       wizard.outputDevices,
@@ -840,7 +847,7 @@ and buildSelectOutputContent = (wizard: t): {..} => {
         localStorage["setItem"](outputDeviceKey, id)
       },
     )
-    content["appendChild"](selector)
+    ignore(content["appendChild"](selector))
   }
 
   content
@@ -854,11 +861,11 @@ and buildTestMicContent = (wizard: t): {..} => {
   let desc = createElement("p")
   desc["textContent"] = stepDescription(TestMicrophone)
   desc["style"]["cssText"] = "color: #aaa; font-size: 14px; margin-bottom: 16px;"
-  content["appendChild"](desc)
+  ignore(content["appendChild"](desc))
 
   // Level meter.
   let meter = makeLevelMeter()
-  content["appendChild"](meter)
+  ignore(content["appendChild"](meter))
 
   // Start/Stop button.
   if wizard.micTestRunning {
@@ -873,12 +880,12 @@ and buildTestMicContent = (wizard: t): {..} => {
     )
     stopBtn["style"]["background"] = "#4a2a2a"
     stopBtn["style"]["borderColor"] = "#744"
-    content["appendChild"](stopBtn)
+    ignore(content["appendChild"](stopBtn))
 
     let hint = createElement("p")
     hint["textContent"] = "Speak into your microphone — you should see the green bar respond."
     hint["style"]["cssText"] = "color: #88cc88; font-size: 13px; margin-top: 12px;"
-    content["appendChild"](hint)
+    ignore(content["appendChild"](hint))
   } else {
     let startBtn = makePrimaryButton(
       ~text="Start Microphone Test",
@@ -890,7 +897,7 @@ and buildTestMicContent = (wizard: t): {..} => {
         let _: unit = %raw(`setTimeout(() => { updateStepContent(wizard); }, 300)`)
       },
     )
-    content["appendChild"](startBtn)
+    ignore(content["appendChild"](startBtn))
   }
 
   content
@@ -904,7 +911,7 @@ and buildTestSpeakersContent = (wizard: t): {..} => {
   let desc = createElement("p")
   desc["textContent"] = stepDescription(TestSpeakers)
   desc["style"]["cssText"] = "color: #aaa; font-size: 14px; margin-bottom: 16px;"
-  content["appendChild"](desc)
+  ignore(content["appendChild"](desc))
 
   if wizard.speakerTestPlaying {
     let playingLabel = createElement("div")
@@ -915,7 +922,7 @@ and buildTestSpeakersContent = (wizard: t): {..} => {
       margin-bottom: 12px;
       font-weight: 600;
     `
-    content["appendChild"](playingLabel)
+    ignore(content["appendChild"](playingLabel))
 
     let stopBtn = makeButton(
       ~text="Stop Tone",
@@ -926,7 +933,7 @@ and buildTestSpeakersContent = (wizard: t): {..} => {
         updateStepContent(wizard)
       },
     )
-    content["appendChild"](stopBtn)
+    ignore(content["appendChild"](stopBtn))
   } else {
     let playBtn = makePrimaryButton(
       ~text="Play Test Tone",
@@ -935,16 +942,18 @@ and buildTestSpeakersContent = (wizard: t): {..} => {
       ~onClick=() => {
         playTestTone(wizard)
         updateStepContent(wizard)
+        let timeoutVal = Float.toString(testToneDuration *. 1000.0 +. 200.0)
         // Auto-refresh when tone ends.
-        let _: unit = %raw(`setTimeout(() => { updateStepContent(wizard); }, ${Float.toString(testToneDuration *. 1000.0 +. 200.0)})`)
-      },
+        let _: unit = %raw(`((timeoutVal) => {
+          setTimeout(() => { updateStepContent(wizard); }, parseFloat(timeoutVal));
+        })(timeoutVal)`)      },
     )
-    content["appendChild"](playBtn)
+    ignore(content["appendChild"](playBtn))
 
     let hint = createElement("p")
     hint["textContent"] = "You should hear a steady tone for 2 seconds. Adjust your volume if needed."
     hint["style"]["cssText"] = "color: #888; font-size: 13px; margin-top: 12px;"
-    content["appendChild"](hint)
+    ignore(content["appendChild"](hint))
   }
 
   content
@@ -976,12 +985,12 @@ and buildNetworkTestContent = (wizard: t): {..} => {
         document.head.appendChild(style);
       }
     })()`)
-    content["appendChild"](spinner)
+    ignore(content["appendChild"](spinner))
 
     let label = createElement("p")
     label["textContent"] = "Testing connection to Burble server..."
     label["style"]["cssText"] = "color: #aaa; font-size: 14px;"
-    content["appendChild"](label)
+    ignore(content["appendChild"](label))
   } else {
     switch wizard.networkTestResult {
     | Some(passed) =>
@@ -1003,7 +1012,7 @@ and buildNetworkTestContent = (wizard: t): {..} => {
         border: 1px solid ${border};
         margin-bottom: 12px;
       `
-      content["appendChild"](badge)
+      ignore(content["appendChild"](badge))
 
       // Show latency if available.
       switch wizard.networkTestLatency {
@@ -1016,9 +1025,9 @@ and buildNetworkTestContent = (wizard: t): {..} => {
         } else {
           "#ff4444"
         }
-        latencyEl["textContent"] = `Latency: ${Float.toFixedWithPrecision(latency, ~digits=0)}ms`
+        latencyEl["textContent"] = `Latency: ${Float.toFixed(latency, ~digits=0)}ms`
         latencyEl["style"]["cssText"] = `color: ${latencyColor}; font-size: 14px;`
-        content["appendChild"](latencyEl)
+        ignore(content["appendChild"](latencyEl))
       | None => ()
       }
 
@@ -1032,13 +1041,13 @@ and buildNetworkTestContent = (wizard: t): {..} => {
         },
       )
       retryBtn["style"]["marginTop"] = "12px"
-      content["appendChild"](retryBtn)
+      ignore(content["appendChild"](retryBtn))
     | None =>
       // Test hasn't been run yet — auto-start.
-      let _startMsg = createElement("p")
-      _startMsg["textContent"] = "Starting network test..."
-      _startMsg["style"]["cssText"] = "color: #aaa; font-size: 14px;"
-      content["appendChild"](_startMsg)
+      let startMsg = createElement("p")
+      startMsg["textContent"] = "Starting network test..."
+      startMsg["style"]["cssText"] = "color: #aaa; font-size: 14px;"
+      ignore(content["appendChild"](startMsg))
 
       // Auto-run the network test.
       let _ = runNetworkTest(wizard)
@@ -1050,7 +1059,7 @@ and buildNetworkTestContent = (wizard: t): {..} => {
       let err = createElement("p")
       err["textContent"] = msg
       err["style"]["cssText"] = "color: #ff4444; font-size: 13px; margin-top: 12px;"
-      content["appendChild"](err)
+      ignore(content["appendChild"](err))
     | None => ()
     }
   }
@@ -1066,7 +1075,7 @@ and buildSummaryContent = (wizard: t): {..} => {
   let desc = createElement("p")
   desc["textContent"] = stepDescription(Summary)
   desc["style"]["cssText"] = "color: #aaa; font-size: 14px; margin-bottom: 20px;"
-  content["appendChild"](desc)
+  ignore(content["appendChild"](desc))
 
   // Summary table.
   let table = createElement("div")
@@ -1091,14 +1100,14 @@ and buildSummaryContent = (wizard: t): {..} => {
     let labelEl = createElement("span")
     labelEl["textContent"] = label
     labelEl["style"]["cssText"] = "color: #888; font-size: 13px;"
-    row["appendChild"](labelEl)
+    ignore(row["appendChild"](labelEl))
 
     let valueEl = createElement("span")
     valueEl["textContent"] = value
     valueEl["style"]["cssText"] = "color: #e0e0e0; font-size: 13px; font-weight: 600;"
-    row["appendChild"](valueEl)
+    ignore(row["appendChild"](valueEl))
 
-    table["appendChild"](row)
+    ignore(table["appendChild"](row))
   }
 
   // Find selected device labels.
@@ -1124,7 +1133,7 @@ and buildSummaryContent = (wizard: t): {..} => {
   addRow("Speakers", outputLabel)
   addRow("Network", networkStatus)
 
-  content["appendChild"](table)
+  ignore(content["appendChild"](table))
 
   // "Ready to go" button.
   let readyBtn = makePrimaryButton(
@@ -1156,7 +1165,7 @@ and buildSummaryContent = (wizard: t): {..} => {
   readyBtn["style"]["marginTop"] = "20px"
   readyBtn["style"]["fontSize"] = "16px"
   readyBtn["style"]["padding"] = "12px 32px"
-  content["appendChild"](readyBtn)
+  ignore(content["appendChild"](readyBtn))
 
   content
 }
@@ -1206,7 +1215,7 @@ and updateStepContent = (wizard: t): unit => {
     let contentAreas: array<{..}> = %raw(`Array.from(root.querySelectorAll('[data-role="step-content"]'))`)
     contentAreas->Array.forEach(area => {
       area["innerHTML"] = ""
-      area["appendChild"](buildStepContent(wizard))
+      ignore(area["appendChild"](buildStepContent(wizard)))
     })
 
     // Update navigation button visibility and state.
@@ -1242,7 +1251,7 @@ and updateStepContent = (wizard: t): unit => {
 
 /// Navigate to the next wizard step. Handles cleanup of the current
 /// step (e.g., stopping mic test) before transitioning.
-let goNext = (wizard: t): unit => {
+and goNext = (wizard: t): unit => {
   // Clean up current step resources.
   switch wizard.currentStep {
   | TestMicrophone => stopMicTest(wizard)
@@ -1271,7 +1280,7 @@ let goNext = (wizard: t): unit => {
 }
 
 /// Navigate to the previous wizard step.
-let goBack = (wizard: t): unit => {
+and goBack = (wizard: t): unit => {
   // Clean up current step resources.
   switch wizard.currentStep {
   | TestMicrophone => stopMicTest(wizard)
@@ -1297,7 +1306,7 @@ let goBack = (wizard: t): unit => {
 ///
 /// The wizard auto-starts by requesting audio permission on the Welcome step.
 /// Call `destroy` to remove the wizard from the DOM.
-let render = (wizard: t): {..} => {
+and render = (wizard: t): {..} => {
   // ── Overlay backdrop ──
   let overlay = createElement("div")
   overlay["className"] = "burble-setup-wizard"
@@ -1332,7 +1341,7 @@ let render = (wizard: t): {..} => {
 
   // ── Stepper indicator ──
   let stepperContainer = createElement("div")
-  stepperContainer["setAttribute"]("data-role", "stepper")
+  ignore(stepperContainer["setAttribute"]("data-role", "stepper"))
   let stepper = makeStepper(stepToIndex(wizard.currentStep))
   // Copy children into the container.
   let _: unit = %raw(`(() => {
@@ -1341,11 +1350,11 @@ let render = (wizard: t): {..} => {
     }
   })()`)
   ignore(stepper)
-  card["appendChild"](stepperContainer)
+  ignore(card["appendChild"](stepperContainer))
 
   // ── Step title ──
   let titleEl = createElement("h2")
-  titleEl["setAttribute"]("data-role", "step-title")
+  ignore(titleEl["setAttribute"]("data-role", "step-title"))
   titleEl["textContent"] = stepTitle(wizard.currentStep)
   titleEl["style"]["cssText"] = `
     color: #e0e0e0;
@@ -1354,13 +1363,13 @@ let render = (wizard: t): {..} => {
     font-weight: 600;
     text-align: center;
   `
-  card["appendChild"](titleEl)
+  ignore(card["appendChild"](titleEl))
 
   // ── Step content area ──
   let contentArea = createElement("div")
-  contentArea["setAttribute"]("data-role", "step-content")
-  contentArea["appendChild"](buildStepContent(wizard))
-  card["appendChild"](contentArea)
+  ignore(contentArea["setAttribute"]("data-role", "step-content"))
+  ignore(contentArea["appendChild"](buildStepContent(wizard)))
+  ignore(card["appendChild"](contentArea))
 
   // ── Navigation row (Back / Next) ──
   let navRow = createElement("div")
@@ -1379,12 +1388,12 @@ let render = (wizard: t): {..} => {
     ~title="Go to the previous step",
     ~onClick=() => goBack(wizard),
   )
-  backBtn["setAttribute"]("data-role", "back-btn")
+  ignore(backBtn["setAttribute"]("data-role", "back-btn"))
   backBtn["style"]["visibility"] = switch prevStep(wizard.currentStep) {
   | Some(_) => "visible"
   | None => "hidden"
   }
-  navRow["appendChild"](backBtn)
+  ignore(navRow["appendChild"](backBtn))
 
   // Next button.
   let nextBtn = makePrimaryButton(
@@ -1393,7 +1402,7 @@ let render = (wizard: t): {..} => {
     ~title="Continue to the next step",
     ~onClick=() => goNext(wizard),
   )
-  nextBtn["setAttribute"]("data-role", "next-btn")
+  ignore(nextBtn["setAttribute"]("data-role", "next-btn"))
   // Disable next on Welcome if permission not granted.
   if wizard.currentStep == Welcome && !wizard.permissionGranted {
     nextBtn["disabled"] = true
@@ -1404,12 +1413,12 @@ let render = (wizard: t): {..} => {
   | None => nextBtn["style"]["display"] = "none"
   | Some(_) => ()
   }
-  navRow["appendChild"](nextBtn)
+  ignore(navRow["appendChild"](nextBtn))
 
-  card["appendChild"](navRow)
-  overlay["appendChild"](card)
+  ignore(card["appendChild"](navRow))
+  ignore(overlay["appendChild"](card))
 
-  wizard.rootElement = Some(overlay)
+  wizard.rootElement = Some(castToJsObj(overlay))
 
   overlay
 }
@@ -1420,7 +1429,7 @@ let render = (wizard: t): {..} => {
 
 /// Remove the setup wizard from the DOM and release all resources.
 /// Call this when the wizard is dismissed or completed.
-let destroy = (wizard: t): unit => {
+and destroy = (wizard: t): unit => {
   // Stop any running tests.
   stopMicTest(wizard)
   stopTestTone(wizard)
@@ -1435,11 +1444,12 @@ let destroy = (wizard: t): unit => {
   // Remove from DOM.
   switch wizard.rootElement {
   | Some(root) =>
-    let parent: Nullable.t<{..}> = root["parentNode"]
+    let rootObj = castFromJsObj(root)
+    let parent: Nullable.t<{..}> = rootObj["parentNode"]
     let isNull: bool = %raw(`parent === null`)
     if !isNull {
       let p: {..} = %raw(`parent`)
-      p["removeChild"](root)
+      ignore(p["removeChild"](root))
     }
   | None => ()
   }
@@ -1453,6 +1463,6 @@ let destroy = (wizard: t): unit => {
 /// Register a callback to be invoked when the wizard completes.
 /// The callback receives no arguments; device selections have already
 /// been persisted to localStorage at that point.
-let onComplete = (wizard: t, cb: unit => unit): unit => {
+and onComplete = (wizard: t, cb: unit => unit): unit => {
   wizard.onComplete = Some(cb)
 }

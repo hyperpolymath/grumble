@@ -164,3 +164,6 @@ mix.lock  # Typically not committed in Elixir projects
 
 # Runtime/data files
 server/priv/repo/
+
+# Idris2 compiled output
+src/build/

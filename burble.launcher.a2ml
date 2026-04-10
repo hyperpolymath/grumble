@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# burble.launcher.a2ml — per-app launcher config for Burble voice/media.
+
+[project]
+name         = "burble"
+display      = "Burble"
+description  = "Self-hostable Elixir control plane + WebRTC media server"
+categories   = ["Network", "AudioVideo", "Development"]
+version      = "0.1.0"
+license      = "PMPL-1.0-or-later"
+
+[repo]
+path = "/var/mnt/eclipse/repos/burble"
+
+[runtime]
+kind    = "server-url"
+port    = 4020
+url     = "http://localhost:4020"
+command = ["env", "MIX_ENV=dev", "mix", "phx.server"]
+pid-file = "/tmp/burble-server.pid"
+log-file = "/tmp/burble-server.log"
+wait-for-url-timeout-seconds = 20
+
+[icon]
+source = "{repo-dir}/assets/icon-256.png"

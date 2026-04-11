@@ -1,15 +1,21 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 #
 # ── DISAMBIGUATION ────────────────────────────────────────────────────────────
-# Two things were called "vext". They are UNRELATED.
+# Three things were called "vext". Read carefully.
 #
-#   YOU ARE HERE → Vext (verification protocol)
-#     Cryptographic feed-integrity protocol: BLAKE3 hash chains proving Burble
-#     text feeds are chronological, complete, uninjected, and attributable.
-#     This is part of burble. It does not notify IRC about anything.
+#   YOU ARE HERE → Burble's Vext INTEGRATION (consumer, not the spec)
+#     This file implements the Vext protocol for Burble's text feeds.
+#     BLAKE3 hash chains proving feeds are chronological, complete,
+#     uninjected, and attributable. Part of burble only.
 #
-#   NOT HERE → vcs-ircd (formerly also called "vext")
-#     A pooled IRC notification daemon for Git/VCS events.
+#   PROTOCOL SPEC → vexometer/vext  ← THE CANONICAL HOME OF THE PROTOCOL
+#     The actual Vext protocol definition, Idris2 proofs, reference impl.
+#     Lives at: vexometer/vext/  (inside the vexometer monorepo)
+#     This file is a CONSUMER of that spec, not the spec itself.
+#     Go there for protocol design decisions, formal proofs, a2ml layer.
+#
+#   UNRELATED → vcs-ircd (formerly also called "vext" — now renamed)
+#     A pooled IRC notification daemon for Git/VCS events. Rust/Tokio.
 #     Lives at: developer-ecosystem/satellites/git-tools/vcs-ircd
 #     GitHub:   hyperpolymath/vcs-ircd
 #     Has nothing to do with cryptographic verification.

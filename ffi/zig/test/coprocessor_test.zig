@@ -6,9 +6,9 @@
 // Individual kernel unit tests are in their respective source files.
 
 const std = @import("std");
-const audio = @import("../src/coprocessor/audio.zig");
-const dsp = @import("../src/coprocessor/dsp.zig");
-const neural = @import("../src/coprocessor/neural.zig");
+const audio = @import("audio");
+const dsp = @import("dsp");
+const neural = @import("neural");
 
 // Re-export module-level tests.
 test {

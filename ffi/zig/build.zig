@@ -37,11 +37,37 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // Named modules for coprocessor kernels — required by Zig 0.15 because
+    // test/coprocessor_test.zig cannot @import("../src/…") outside its root.
+    const audio_mod = b.createModule(.{
+        .root_source_file = b.path("src/coprocessor/audio.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const dsp_mod = b.createModule(.{
+        .root_source_file = b.path("src/coprocessor/dsp.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const neural_mod = b.createModule(.{
+        .root_source_file = b.path("src/coprocessor/neural.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "dsp", .module = dsp_mod },
+        },
+    });
+
     // Unit tests.
     const test_mod = b.createModule(.{
         .root_source_file = b.path("test/coprocessor_test.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "audio", .module = audio_mod },
+            .{ .name = "dsp", .module = dsp_mod },
+            .{ .name = "neural", .module = neural_mod },
+        },
     });
 
     const tests = b.addTest(.{

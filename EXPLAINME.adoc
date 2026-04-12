@@ -106,14 +106,15 @@ ____
 
 Burble uses a **Dual-Track** architecture. The core Application Binary Interface (ABI) is formally specified in **Idris2** using dependent types. This proves memory layout, protocol transitions, and identity ranks before a single line of runtime code executes.
 
-- **Stack:** Idris2 (Formal Proofs) → Zig (FFI Implementation) → V-lang (REST/Dodeca-API) → Elixir (Control Plane).
+- **Stack:** Idris2 (Formal Proofs) → Zig (FFI Implementation) → Elixir (Control Plane).
 - **Avow:** Consent attestation on room join/leave is proven well-founded using identity ranks.
 - **Vext:** Extension sandboxing is proven safe via a capability subsumption lattice.
 - **Linearity:** `MediaPipeline.idr` uses linear types to prove that every audio buffer is consumed exactly once, preventing leaks and use-after-free at the type level.
 
 - ABI definitions: `src/Burble/ABI/Types.idr`, `src/Burble/ABI/MediaPipeline.idr`
 - Zig FFI: `ffi/zig/src/ffi.zig`
-- V-lang API: `api/v/burble.v`
+
+NOTE: An earlier V-lang REST API layer (`api/v/`) was removed following the V-lang ban (2026-04-10). The Zig FFI layer (`ffi/zig/`) covers this surface with C-ABI compatibility.
 
 == Zero-Trust SDP & AWOL Routing
 

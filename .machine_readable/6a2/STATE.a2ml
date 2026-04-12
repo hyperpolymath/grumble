@@ -6,7 +6,7 @@
 [metadata]
 project = "burble"
 version = "1.1.0"
-last-updated = "2026-04-01"
+last-updated = "2026-04-12"
 status = "active"
 
 [project-context]
@@ -43,6 +43,10 @@ open-failures = 0
 [session-history]
 # 2026-04-03: Binary Idris2 build artifacts removed from repository. Gitignore updated
 #             to prevent future binary artifact commits.
+# 2026-04-12: P0 believe_me sweep — MediaPipeline.idr resampleFrame converted from
+#             anonymous `believe_me frame` placeholder to named `postulate resampleFrame`
+#             with documented Zig FFI migration path to `%foreign "C:burble_resample,libburblemedia"`.
+#             Commit bf0eef3 pushed to GitHub.
 
 [crg]
 grade = "C"

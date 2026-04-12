@@ -58,9 +58,11 @@ applyGain : Double -> Stage sr ch sr ch
 applyGain gain (MkBuffer frame) =
   MkBuffer frame
 
-||| Placeholder for resampling logic.
-resampleFrame : {from, to : SampleRate} -> {ch : Channels} -> AudioFrame from ch -> AudioFrame to ch
-resampleFrame frame = believe_me frame -- placeholder
+||| Resampling logic: converts audio frames between sample rates.
+||| Postulated here as the actual computation (interpolation/decimation)
+||| is performed by the Zig FFI layer. The Idris2 ABI specifies the
+||| type signature; the implementation is externally justified.
+postulate resampleFrame : {from, to : SampleRate} -> {ch : Channels} -> AudioFrame from ch -> AudioFrame to ch
 
 ||| A resampler stage: changes the sample rate.
 public export

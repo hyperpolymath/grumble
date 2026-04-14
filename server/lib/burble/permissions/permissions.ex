@@ -31,6 +31,7 @@ defmodule Burble.Permissions do
 
   Text:
   - `:text` — send text messages
+  - `:chat_send` — send chat messages (LLM-specific)
   - `:pin_messages` — pin messages in channels
   - `:manage_messages` — delete others' messages
 
@@ -42,6 +43,14 @@ defmodule Burble.Permissions do
   - `:kick` — kick users from server
   - `:ban` — ban users from server
   - `:view_audit_log` — access audit log
+
+  ## Built-in roles
+
+  - `:admin` — full access to all permissions
+  - `:moderator` — moderation capabilities without server management
+  - `:member` — regular user with speak and chat capabilities
+  - `:guest` — limited access, speak only
+  - `:llm` — LLM participant with selective capabilities (join, speak, chat_send)
   """
 
   @all_permissions [
@@ -53,6 +62,7 @@ defmodule Burble.Permissions do
     :deafen_others,
     :move_others,
     :text,
+    :chat_send,
     :pin_messages,
     :manage_messages,
     :manage_rooms,
@@ -97,6 +107,10 @@ defmodule Burble.Permissions do
     MapSet.new([:join_room, :speak, :text])
   end
 
+  def role_template(:llm) do
+    MapSet.new([:join_room, :speak, :chat_send])
+  end
+
   @doc """
   Evaluate effective permissions for a user in a channel.
 
@@ -118,5 +132,28 @@ defmodule Burble.Permissions do
   def can?(role_perms, permission, channel_allow \\ MapSet.new(), channel_deny \\ MapSet.new()) do
     effective_permissions(role_perms, channel_allow, channel_deny)
     |> has_permission?(permission)
+  end
+
+  @doc """
+  Validate that a participant with the LLM role has only the required permissions.
+  
+  LLM participants should only have :join_room, :speak, and :chat_send capabilities.
+  This prevents LLM participants from having human-facing controls like :hand_raise or :mute_self.
+  """
+  def validate_llm_permissions(perms) do
+    required = MapSet.new([:join_room, :speak, :chat_send])
+    forbidden = MapSet.new([:hand_raise, :mute_self, :mute_others, :kick, :ban, :manage_rooms, :manage_roles, :manage_server])
+    
+    # LLM must have exactly the required permissions
+    perms == required && MapSet.disjoint?(perms, forbidden)
+  end
+
+  @doc """
+  Check if a participant is an LLM based on their permissions.
+  
+  Returns true if the participant has the exact LLM permission set.
+  """
+  def is_llm?(perms) do
+    validate_llm_permissions(perms)
   end
 end

@@ -23,21 +23,23 @@ import Data.Nat
 -- Role definitions
 -- ---------------------------------------------------------------------------
 
-||| The four participant roles in a Burble room, ordered by privilege level.
+||| The participant roles in a Burble room, ordered by privilege level.
 ||| Each role subsumes the capabilities of all roles below it.
+||| LLM is a specialized role at the Speaker privilege level with selective capabilities.
 public export
-data Role = Listener | Speaker | Moderator | Owner
+data Role = Listener | Speaker | Moderator | Owner | LLM
 
 -- ---------------------------------------------------------------------------
 -- Role ordering (total order)
 -- ---------------------------------------------------------------------------
 
 ||| Numeric privilege level for each role.
-||| Listener (0) < Speaker (1) < Moderator (2) < Owner (3).
+||| Listener (0) < Speaker (1) = LLM (1) < Moderator (2) < Owner (3).
 public export
 roleLevel : Role -> Nat
 roleLevel Listener  = 0
 roleLevel Speaker   = 1
+roleLevel LLM       = 1  -- Same privilege level as Speaker but selective capabilities
 roleLevel Moderator = 2
 roleLevel Owner     = 3
 
@@ -160,6 +162,7 @@ public export
 roleLevelMax : (r : Role) -> LTE (roleLevel r) 3
 roleLevelMax Listener  = LTEZero
 roleLevelMax Speaker   = LTESucc LTEZero
+roleLevelMax LLM       = LTESucc LTEZero  -- LLM is level 1, same as Speaker
 roleLevelMax Moderator = LTESucc (LTESucc LTEZero)
 roleLevelMax Owner     = LTESucc (LTESucc (LTESucc LTEZero))
 
@@ -209,6 +212,7 @@ public export
 roleToInt : Role -> Int
 roleToInt Listener  = 0
 roleToInt Speaker   = 1
+roleToInt LLM       = 1
 roleToInt Moderator = 2
 roleToInt Owner     = 3
 
@@ -217,6 +221,7 @@ public export
 Eq Role where
   Listener  == Listener  = True
   Speaker   == Speaker   = True
+  LLM       == LLM       = True
   Moderator == Moderator = True
   Owner     == Owner     = True
   _         == _         = False

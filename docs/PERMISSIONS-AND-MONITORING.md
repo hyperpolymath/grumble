@@ -52,9 +52,12 @@ graph TD
 |------|------|--------------|
 | 0 | Guest | speak, listen, see_presence |
 | 1 | Member | +mute_self, +hand_raise, +chat |
+| 1 | LLM | speak, chat_send (selective tier 1) |
 | 2 | Moderator | +mute_others, +kick, +see_stats |
 | 3 | Admin | +ban, +room_settings, +promote |
 | 4 | Owner | +delete_room, +transfer_ownership |
+
+**Note on LLM Tier 1**: LLM participants use tier 1 capabilities selectively. While they require authenticated access like members, they only exercise `speak` and `chat_send` capabilities for programmatic communication, without human-facing controls like `hand_raise` or `mute_self`.
 
 ### Implementation Plan:
 

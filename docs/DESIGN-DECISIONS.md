@@ -54,9 +54,16 @@ graph TD
 |------|-----------|--------------|
 | 0 | Guest | speak, listen, see_presence |
 | 1 | Member | +mute_self, +hand_raise, +chat_send |
+| 1 | LLM | speak, chat_send (selective) |
 | 2 | Moderator | +mute_others, +kick, +see_stats |
 | 3 | Admin | +ban, +room_settings, +promote |
 | 4 | Owner | +delete_room, +transfer_ownership |
+
+**LLM Permission Design Decision**:
+- LLM participants use tier 1 capabilities selectively
+- They have `speak` and `chat_send` for programmatic communication
+- They lack human-facing controls (`hand_raise`, `mute_self`) as these are UI-driven
+- This selective approach prevents capability creep while maintaining necessary functionality
 
 **Code Implementation:**
 ```elixir

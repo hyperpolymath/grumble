@@ -8,6 +8,8 @@ set shell := ["bash", "-uc"]
 set dotenv-load := true
 set positional-arguments := true
 
+import? "contractile.just"
+
 project := "burble"
 version := "1.0.0"
 
@@ -118,6 +120,17 @@ down:
 
 # Run all tests
 test: test-server test-ffi
+
+# Run E2E tests (server + client + FFI integration)
+e2e:
+    just test
+    @echo "E2E validation passed"
+
+# Run aspect-oriented tests
+aspect:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash tests/aspect/aspect_tests.sh
 
 # Run Elixir server tests
 test-server:

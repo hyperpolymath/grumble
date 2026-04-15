@@ -36,4 +36,19 @@ This document defines the quality assessment criteria for individual project com
 6. Has it been tested on 6+ diverse external targets? (Broad → **B**)
 7. Do external users confirm it works and is useful? (Field-proven → **A**)
 
+=== Grade E Requirements (Minimal)
+
+For **Grade E (Minimal)**, components must:
+
+1. **Pass `panic-attacker assail`** (static analysis only)
+   - No critical vulnerabilities (e.g., `eval()`, hardcoded secrets)
+   - Address all high-severity findings
+2. **Document known issues** in `PROOF-NEEDS.md` or equivalent
+3. **Include a privacy policy** (if handling user data)
+4. **Build without errors** in CI
+
+For **browser extensions**:
+- Use `panic-attacker assail` (skip dynamic attack phase)
+- Focus on DOM manipulation, `eval()` usage, and supply chain risks
+
 See link:READINESS.adoc[READINESS.adoc] for the current project assessment.

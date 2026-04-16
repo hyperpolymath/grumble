@@ -81,8 +81,29 @@
   )
 
   ; === Project-Specific Invariants ===
-  ; *REMINDER: Add invariants specific to this repo*
-  ; (must "# Add project-specific invariants here")
+
+  (project-invariants
+    ; Language migration (in progress — see STATE.a2ml [migration])
+    (must "no new .v (V-lang) files — migrate to Zig")
+    (must "no new .res / .resi (ReScript) files — migrate to AffineScript")
+    (must "no api/ directory — FFI lives at ffi/zig/ and is the sole C-ABI surface")
+
+    ; Signaling
+    (must "signaling/relay.js is the sole signaling relay implementation")
+    (must "no duplicate relay implementations in other languages")
+
+    ; Audio pipeline honesty
+    (must "stub NIFs must return {:error, :not_implemented} — no silent no-ops")
+    (must "Burble.LLM.process_query must NOT return simulated strings in production build")
+
+    ; ABI / proofs
+    (must "src/Burble/ABI/*.idr proofs must compile via `just build-proofs`")
+    (must "no new postulate without an accompanying justification comment")
+
+    ; Docs vs reality
+    (must "STATE.a2ml test-count must match actual `just test` output within ±5")
+    (must "ROADMAP.adoc completion claims must match STATE.a2ml")
+  )
 
   (enforcement
     (k9-validator "contractiles/k9/must-check.k9.ncl")

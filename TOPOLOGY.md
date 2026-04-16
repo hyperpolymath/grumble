@@ -21,35 +21,45 @@ burble/
 │       │   ├── permissions/       # Room and user permissions
 │       │   ├── groove/            # Groove IPC protocol integration
 │       │   ├── network/           # Network topology and routing
-│       │   ├── timing/            # IEEE 1588 PTP precision timing
-│       │   ├── coprocessor/       # Axiom/VeriSimDB coprocessors
+│       │   ├── timing/            # IEEE 1588 PTP precision timing (framework complete; HW NIF pending Phase 4)
+│       │   ├── coprocessor/       # Backend dispatch (smart/zig/elixir) + pipeline
 │       │   ├── store/             # Persistent state (store.ex)
 │       │   ├── topology/          # Room topology management
-│       │   ├── security/          # Security hardening
+│       │   ├── security/          # Security hardening (SDP / SPA)
 │       │   ├── moderation/        # Content moderation
 │       │   ├── bebop/             # Bebop binary serialization
-│       │   ├── llm/               # LLM integration (llm.ex)
-│       │   └── bridges/           # External bridge adapters
+│       │   ├── llm/               # LLM integration (STUB — Phase 2: provider + circuit breaker)
+│       │   ├── verification/      # Avow + Vext attestation (Avow = stub; Vext = real)
+│       │   └── bridges/           # External bridge adapters (Mumble, IDApTIK, PanLL)
 │       └── burble_web/
 │           ├── router.ex          # Phoenix router
-│           ├── channels/          # WebSocket channels
-│           ├── controllers/       # HTTP controllers
+│           ├── channels/          # WebSocket channels (RoomChannel + UserSocket)
+│           ├── controllers/       # HTTP controllers (api/* — Phoenix REST, not V-lang)
 │           └── plugs/             # Request plugs
-├── signaling/                     # WebRTC signaling relay (JS + ReScript)
-│   ├── relay.js                   # Signaling relay server
-│   └── Relay.res                  # ReScript relay bindings
-├── src/                           # Idris2 ABI definitions
-│   ├── ABI.idr                    # Top-level ABI
-│   ├── core/                      # Core type definitions
-│   ├── bridges/                   # Bridge ABI contracts
-│   └── aspects/                   # Cross-cutting ABI aspects
-├── ffi/zig/                       # Zig FFI (SIMD audio, LMDB NIFs)
-├── api/                           # REST API (v-lang connectors)
-├── client/                        # Browser/native client SDK
-├── admin/                         # Admin dashboard
-├── container/                     # Containerfile and compose
-└── verification/                  # Formal verification proofs
+├── signaling/                     # WebRTC signaling relay
+│   ├── relay.js                   # Sole relay — Deno, ephemeral SDP, 60s TTL
+│   └── worker.js                  # Cloudflare Worker wrapper
+├── src/                           # Idris2 ABI definitions + proofs
+│   ├── ABI.idr                    # Top-level ABI (re-exports)
+│   └── Burble/ABI/                # Types, Permissions, Avow, Vext, MediaPipeline, WebRTCSignaling, Layout, Foreign
+├── ffi/zig/                       # SOLE Zig FFI — SIMD audio/DSP/neural/compression NIFs
+│   └── src/coprocessor/           # audio.zig, dsp.zig, neural.zig, compression.zig, firewall.zig, nif.zig
+├── client/
+│   ├── web/                       # Browser client — ReScript (migrating to AffineScript, Phase 3/5)
+│   ├── lib/                       # Embeddable SDK (BurbleClient, BurbleVoice, BurbleSpatial, BurbleSignaling)
+│   └── desktop/                   # Ephapax (.eph) desktop client
+├── admin/                         # Admin dashboard (ReScript — migrates in Phase 5)
+├── verification/                  # Safety case, benchmarks, fuzzing, proofs, traceability
+├── containers/                    # Containerfile + compose.toml (Chainguard base)
+└── .machine_readable/             # contractiles (MUST/TRUST/INTENT/ADJUST) + 6a2/*.a2ml
 ```
+
+### Removed 2026-04-16 (Phase 0)
+
+- `api/v/` — V-lang REST client (banned; Zig FFI at `ffi/zig/` replaces it)
+- `api/zig/` — broken merge-conflicted half-migration duplicate of `ffi/zig/`
+- `signaling/Relay.res` — ReScript duplicate of the authoritative `relay.js`
+- `alloyiser.toml` — orphaned Alloy spec pointing at deleted V-lang source
 
 ## Data Flow
 

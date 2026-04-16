@@ -5,32 +5,53 @@
 
 [metadata]
 project = "burble"
-version = "1.1.0"
-last-updated = "2026-04-12"
+version = "1.1.0-pre"
+last-updated = "2026-04-16"
 status = "active"
 
 [project-context]
 name = "burble"
 purpose = "Modern, self-hostable, voice-first communications platform. Mumble successor."
-completion-percentage = 85
+completion-percentage = 72
 
 [position]
-phase = "maintenance"
-maturity = "production"
+phase = "hardening"
+maturity = "pre-production"
+rationale = "Foundations + SFU solid. LLM service, PTP hardware read, Avow attestation, Opus server NIF are stubs contradicting earlier 'done' claims. Migration in progress: V-lang removed, ReScript -> AffineScript pending."
 
 [route-to-mvp]
 milestones = [
   { name = "v0.1.0 to v0.4.0 — Foundation & Transport", completion = 100 },
   { name = "v1.0.0 — Stable Release", completion = 100 },
-  { name = "v1.1.0 — High Rigor & Resilience", completion = 80 }
+  { name = "Phase 0 — Scrub baseline (V-lang removed, docs honest)", completion = 100, date = "2026-04-16" },
+  { name = "Phase 1 — Audio dependable (Opus honest, jitter sync, comfort noise, REMB, Avow chain)", completion = 0 },
+  { name = "Phase 2 — LLM real (provider, circuit breaker, fixed parse_frame, NimblePool wired)", completion = 0 },
+  { name = "Phase 3 — RTSP + signaling + text + AffineScript client start", completion = 0 },
+  { name = "Phase 4 — PTP hardware clock via Zig NIF, phc2sys supervisor, multi-node align", completion = 0 },
+  { name = "Phase 5 — ReScript -> AffineScript completion", completion = 0 }
 ]
 
+[migration]
+v-lang = { status = "complete", date = "2026-04-16", removed = ["api/v/burble.v", "api/v/server.v", "api/zig/ (broken duplicate)", "alloyiser.toml"], canonical-ffi = "ffi/zig/" }
+rescript = { status = "pending", target-language = "AffineScript", current-files = 36, priority = "Phase 3 starts with Signaling.res + TextChat.res; Phase 5 finishes" }
+signaling-relay = { status = "consolidated", canonical = "signaling/relay.js", removed = ["signaling/Relay.res"] }
+
 [blockers-and-issues]
+doc-reality-drift = [
+  "ROADMAP.adoc claims LLM Service DONE — is a stub (provider missing, parse_frame broken)",
+  "ROADMAP.adoc claims Formal Proofs DONE — Avow attestation is data-type-only, no dependent-type enforcement",
+  "README.adoc PTP claim sub-microsecond assumes hardware — code falls back to system clock without NIF",
+  "ffi/zig coprocessor nif_audio_encode/decode are not real Opus (intentional SFU-opaque, but misleadingly named)"
+]
 
 [critical-next-actions]
-actions = [
-  "Implement circuit breakers and health checks for cascading failure prevention.",
-  "Set up automated backups for VeriSimDB state."
+phase-1-audio = [
+  "Decide Opus strategy: honest-demotion vs libopus link",
+  "Validate TFLite neural model or gate behind feature flag",
+  "Wire RTP-timestamp jitter sync across peers (precursor to PTP phase)",
+  "Server-side comfort noise injection on RX silence",
+  "REMB bitrate adaptation feedback loop",
+  "Replace Avow stub with hash-chain audit log + non-circularity property test"
 ]
 
 [maintenance-status]
@@ -43,10 +64,17 @@ open-failures = 0
 [session-history]
 # 2026-04-03: Binary Idris2 build artifacts removed from repository. Gitignore updated
 #             to prevent future binary artifact commits.
+# 2026-04-09: RoomChannel catch-all handle_in + handle_info for :participant_joined/:left
+#             added (commit 167d46d) — closes gaps previously documented in TEST-NEEDS.md.
 # 2026-04-12: P0 believe_me sweep — MediaPipeline.idr resampleFrame converted from
 #             anonymous `believe_me frame` placeholder to named `postulate resampleFrame`
 #             with documented Zig FFI migration path to `%foreign "C:burble_resample,libburblemedia"`.
 #             Commit bf0eef3 pushed to GitHub.
+# 2026-04-16: Phase 0 scrub-baseline — deleted api/v/ (V-lang client), api/zig/ (broken
+#             merge-conflicted duplicate), signaling/Relay.res (duplicate of relay.js),
+#             alloyiser.toml (orphaned V-lang spec). Updated MUST.contractile with V/ReScript
+#             bans. Flipped @known_gap tests in signaling_test.exs (the gaps are fixed).
+#             Collapsed BURBLE-PROOF-STATUS.md. Demoted completion % to honest 72.
 
 [crg]
 grade = "C"

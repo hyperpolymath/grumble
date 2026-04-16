@@ -16,12 +16,16 @@
 #     started via start_supervised! so ExUnit owns their lifecycle.
 #   - All tests run with `async: false` because they share named processes.
 #
-# Known channel gaps (documented as @tag :known_gap tests):
-#   - RoomChannel has no catch-all handle_in clause — unmatched events crash it.
-#   - RoomChannel has no handle_info clause for :participant_joined/:left events.
-#   - NNTPSBackend is required for text messages; not started in unit test mode.
+# Channel safety contract (resolved 2026-04-09, commit 167d46d):
+#   - RoomChannel has a catch-all handle_in clause — unmatched events return
+#     {:reply, {:error, %{reason: "unknown_event", event: event}}, socket}.
+#   - RoomChannel handles :participant_joined / :participant_left PubSub events
+#     and a catch-all handle_info for any other unexpected message.
+#   - NNTPSBackend is required for text messages; skipped in unit test mode where
+#     it is not started.
 #
-# These tests verify what DOES work today and document known gaps.
+# Regression assertions for these safety contracts live in the
+# "Channel safety contract" describe block at the end of this file.
 
 defmodule Burble.E2E.SignalingTest do
   use ExUnit.Case, async: false
@@ -325,47 +329,119 @@ defmodule Burble.E2E.SignalingTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Known gap documentation tests
+  # Channel safety contract — regression guards
   # ---------------------------------------------------------------------------
-  # These tests assert the CURRENT (broken) behavior so the CI catches regressions
-  # and so engineers know what to fix.  Tag: :known_gap.
+  # These tests assert that the RoomChannel does NOT crash on unexpected or
+  # malformed input.  The safety contract landed 2026-04-09 (commit 167d46d);
+  # these tests guard against regression.
 
-  @tag :known_gap
-  test "channel crashes on malformed signal missing payload (known gap: no catch-all clause)" do
-    sock = guest_socket("TestUser")
-    room_id = generate_room_id()
+  describe "Channel safety contract" do
+    test "catch-all handle_in: malformed signal event returns structured error (no crash)" do
+      sock = guest_socket("TestUser")
+      room_id = generate_room_id()
 
-    {:ok, _reply, chan} =
-      subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{})
+      {:ok, _reply, chan} =
+        subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{})
 
-    # Sending a signal without "payload" triggers FunctionClauseError.
-    # This is a known gap — RoomChannel needs a catch-all handle_in clause.
-    Process.flag(:trap_exit, true)
-    push(chan, "signal", %{"to" => "someone", "type" => "offer"})
+      # The "signal" clause expects "to", "type", and "payload". Omitting
+      # "payload" falls through to the catch-all, which must reply with an error
+      # shape instead of crashing.
+      Process.flag(:trap_exit, true)
+      ref = push(chan, "signal", %{"to" => "someone", "type" => "offer"})
 
-    # The channel process will crash — we accept this as current behavior.
-    # TODO: add catch-all handle_in that returns {:reply, {:error, :invalid_event}, socket}
-    assert_receive {:EXIT, _pid, _reason}, 500
-    Process.flag(:trap_exit, false)
-  end
+      assert_reply ref, :error, %{reason: "unknown_event", event: "signal"}
+      refute_receive {:EXIT, _pid, _reason}, 200
 
-  @tag :known_gap
-  test "channel crashes on empty text body (known gap: no catch-all handle_in)" do
-    sock = guest_socket("Sender")
-    room_id = generate_room_id()
+      Process.flag(:trap_exit, false)
+      leave(chan)
+    end
 
-    {:ok, _reply, chan} =
-      subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{
-        "display_name" => "Sender"
-      })
+    test "catch-all handle_in: empty text body returns invalid_text_payload (no crash)" do
+      sock = guest_socket("Sender")
+      room_id = generate_room_id()
 
-    # Empty body: `when byte_size(body) > 0` guard fails, no other clause matches.
-    # This crashes the channel — a known gap.
-    # TODO: add `handle_in("text", _, socket)` catch-all returning :error.
-    Process.flag(:trap_exit, true)
-    push(chan, "text", %{"body" => ""})
-    assert_receive {:EXIT, _pid, _reason}, 500
-    Process.flag(:trap_exit, false)
+      {:ok, _reply, chan} =
+        subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{
+          "display_name" => "Sender"
+        })
+
+      # The primary "text" clause guard requires `byte_size(body) > 0`. Empty
+      # body falls through to the secondary "text" catch-all, which must return
+      # {:reply, {:error, %{reason: "invalid_text_payload"}}, socket}.
+      Process.flag(:trap_exit, true)
+      ref = push(chan, "text", %{"body" => ""})
+
+      assert_reply ref, :error, %{reason: "invalid_text_payload"}
+      refute_receive {:EXIT, _pid, _reason}, 200
+
+      Process.flag(:trap_exit, false)
+      leave(chan)
+    end
+
+    test "catch-all handle_in: entirely unknown event returns unknown_event (no crash)" do
+      sock = guest_socket("Unknown")
+      room_id = generate_room_id()
+
+      {:ok, _reply, chan} =
+        subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{})
+
+      Process.flag(:trap_exit, true)
+      ref = push(chan, "nonsense_event", %{"anything" => "goes"})
+
+      assert_reply ref, :error, %{reason: "unknown_event", event: "nonsense_event"}
+      refute_receive {:EXIT, _pid, _reason}, 200
+
+      Process.flag(:trap_exit, false)
+      leave(chan)
+    end
+
+    test "handle_info for :participant_joined pushes event without crashing" do
+      sock = guest_socket("Listener")
+      room_id = generate_room_id()
+
+      {:ok, _reply, chan} =
+        subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{})
+
+      # Simulate the PubSub broadcast from Burble.Rooms.Room by sending the
+      # message directly to the channel process.
+      send(chan.channel_pid, {:participant_joined, "other_user", %{display_name: "Other"}})
+
+      assert_push "participant_joined", %{user_id: "other_user", meta: %{display_name: "Other"}}
+      leave(chan)
+    end
+
+    test "handle_info for :participant_left pushes event without crashing" do
+      sock = guest_socket("Listener")
+      room_id = generate_room_id()
+
+      {:ok, _reply, chan} =
+        subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{})
+
+      send(chan.channel_pid, {:participant_left, "other_user"})
+
+      assert_push "participant_left", %{user_id: "other_user"}
+      leave(chan)
+    end
+
+    test "handle_info catch-all: unexpected message is ignored without crashing" do
+      sock = guest_socket("Quiet")
+      room_id = generate_room_id()
+
+      {:ok, _reply, chan} =
+        subscribe_and_join(sock, BurbleWeb.RoomChannel, "room:#{room_id}", %{})
+
+      Process.flag(:trap_exit, true)
+      send(chan.channel_pid, {:some_random_atom, :with, :three, :args})
+
+      refute_receive {:EXIT, _pid, _reason}, 200
+      Process.flag(:trap_exit, false)
+
+      # Channel is still alive and responsive.
+      ref = push(chan, "nonsense_event", %{})
+      assert_reply ref, :error, %{reason: "unknown_event"}
+
+      leave(chan)
+    end
   end
 
   # ---------------------------------------------------------------------------

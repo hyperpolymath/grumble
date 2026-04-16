@@ -8,6 +8,13 @@ if System.get_env("PHX_SERVER") do
   config :burble, BurbleWeb.Endpoint, server: true
 end
 
+# SNIF configuration - path to WASM modules
+snif_path = 
+  System.get_env("BURBLE_SNIF_PATH") ||
+  Path.join([:code.priv_dir(:burble), "snif", "burble_fft.wasm"])
+
+config :burble, :snif_path, snif_path
+
 if config_env() == :prod do
   verisimdb_url =
     System.get_env("VERISIMDB_URL") ||

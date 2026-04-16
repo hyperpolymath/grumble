@@ -20,7 +20,7 @@
 #   I/O jitter buffer      → Elixir (data structure ops — <1µs)
 #   I/O conceal loss       → Elixir (simple ops)
 #   I/O adaptive bitrate   → Elixir (trivial arithmetic — <1µs)
-#   DSP FFT (256)          → Zig  (37x faster:   22µs vs 826µs)
+#   DSP FFT (256)          → SNIF (crash-isolated) → Zig  (37x faster:   22µs vs 826µs)
 #   DSP convolve (64x32)   → Zig  (28x faster:   11µs vs 311µs)
 #   DSP mix                → Elixir (Zig NIF not wired for complex marshalling)
 #   Neural denoise         → Zig  (6.7x faster:  8µs vs 54µs)
@@ -36,8 +36,7 @@ defmodule Burble.Coprocessor.SmartBackend do
 
   @behaviour Burble.Coprocessor.Backend
 
-  alias Burble.Coprocessor.ElixirBackend
-  alias Burble.Coprocessor.ZigBackend
+  alias Burble.Coprocessor.{ElixirBackend, ZigBackend, SNIFBackend}
 
   # ---------------------------------------------------------------------------
   # Backend metadata
@@ -167,12 +166,22 @@ defmodule Burble.Coprocessor.SmartBackend do
 
   @impl true
   def dsp_fft(signal, size) do
-    zig_or_elixir().dsp_fft(signal, size)
+    # Try SNIF first (crash-isolated), fallback to Zig, then Elixir
+    if SNIFBackend.available?() do
+      SNIFBackend.dsp_fft(signal, size)
+    else
+      zig_or_elixir().dsp_fft(signal, size)
+    end
   end
 
   @impl true
   def dsp_ifft(spectrum, size) do
-    zig_or_elixir().dsp_ifft(spectrum, size)
+    # Try SNIF first (crash-isolated), fallback to Zig, then Elixir
+    if SNIFBackend.available?() do
+      SNIFBackend.dsp_ifft(spectrum, size)
+    else
+      zig_or_elixir().dsp_ifft(spectrum, size)
+    end
   end
 
   @impl true

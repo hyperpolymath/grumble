@@ -167,3 +167,46 @@ Airborne Submarine Squadron:
 * `docs/governance/maintenance/`
 * `docs/governance/planning/`
 * `docs/governance/audit/`
+
+== ASS Repo Reality Check (Useful For Claude)
+
+This section reflects what is *actually implemented* in
+`games-ecosystem/airborne-submarine-squadron` as of 2026-04-17.
+
+=== Authoritative Boundary In ASS
+
+* Canonical gameplay state remains local to the game loop + Gossamer event bus.
+* Burble/Groove are non-authoritative mirror/coordination surfaces in this repo.
+* Do not move source-of-truth simulation state into Burble pathways.
+
+Reference docs in ASS:
+
+* `docs/BURBLE-GROOVE-INTEGRATION.adoc`
+* `docs/EVENT-TAXONOMY.md`
+* `docs/MAINTENANCE-ACTIONS-2026-04-17.adoc`
+
+=== Current Multiplayer/Transport Reality
+
+* ASS currently uses local Deno signalling endpoint `/room/:code` (`run.js`).
+* Browser WebRTC handshake broker is `gossamer/net/signalling.js`.
+* `signalling.js` is transport-only and must not own gameplay state.
+
+=== Groove Manifest Reality In ASS
+
+* Manifest path: `.well-known/groove/manifest.json`.
+* Current contract is `mode: passive` with CLI capability surface.
+* Treat this as explicit current-state, not full Burble capability parity.
+
+=== Contract/Test Locks Added In ASS
+
+* Compatibility lock: manifest shape and mode invariants.
+* Regression lock: signalling remains world-agnostic (transport only).
+* Existing ABI locks remain in place for `init_state`/`step_state` boundary.
+
+=== Practical Guidance For Claude In ASS Context
+
+* Prefer incremental integration: mirror selected events with event ID + UTC timestamp + local tick.
+* Keep deterministic local event ordering as source of truth.
+* If EPHAPAX semantics need changes, track and fix upstream at root repos (no ASS-only workarounds).
+* When copying text into ASS docs, normalize licensing/header conventions to AGPL-3.0-or-later for this repo.
+* Be careful with stale references: canonical Affine source is `src/main.affine` (not legacy `.as` naming).

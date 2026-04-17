@@ -134,7 +134,17 @@ aspect:
 
 # Run Elixir server tests
 test-server:
+    ./scripts/ensure-msquic-version.sh
+    ./scripts/ensure-quicer-prereqs.sh
     cd server && mix test --no-start
+
+# Guard check: fail fast if embedded msquic is on the wrong tag
+guard-msquic:
+    ./scripts/ensure-msquic-version.sh --check-only
+
+# Guard check: fail fast if quicer source-build prerequisites are missing
+guard-quicer-prereqs:
+    ./scripts/ensure-quicer-prereqs.sh
 
 # Run Zig FFI unit tests
 test-ffi:

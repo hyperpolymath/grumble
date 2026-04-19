@@ -35,38 +35,41 @@
 
   ; === Purpose (what this repo IS) ===
   (purpose
-    "{{ONE_PARAGRAPH_PURPOSE}}"
+    "Burble is a self-hostable, privacy-first voice communications platform. It delivers sub-10ms latency WebRTC audio with an Elixir/Phoenix control plane, Zig SIMD coprocessor NIFs, and a P2P mode that requires no server at all. The AI data channel lets two Claude Code instances exchange structured JSON over the same encrypted WebRTC link used for voice, enabling pair-programming across machines."
   )
 
   ; === Anti-Purpose (what this repo is NOT — prevents scope creep) ===
   (anti-purpose
-    "{{ONE_PARAGRAPH_ANTI_PURPOSE}}"
-    ; Examples:
-    ; "This is NOT a general-purpose database — it solves one specific problem."
-    ; "This is NOT a framework — it is a library with a focused API."
-    ; "This does NOT handle authentication — that is delegated to [other repo]."
+    "Burble is NOT a general-purpose messaging platform, NOT a video conferencing tool, NOT a Discord/Slack clone. It does NOT handle text-first chat as a primary concern (text is an adjunct to voice). It does NOT require accounts, telemetry, or centralised infrastructure in P2P mode. It is NOT only for able-bodied users with modern hardware — accessibility is a structural requirement (see ADJUST.contractile)."
   )
 
   ; === Key Architectural Decisions That Must Not Be Reversed ===
   (architectural-invariants
-    ; *REMINDER: List the foundational decisions*
-    ; ("Idris2 for ABI definitions — dependent types prove interface correctness")
-    ; ("Zig for FFI — zero-cost C ABI compatibility")
-    ; ("Elixir for supervision — OTP fault tolerance")
+    ("Elixir/Phoenix for the control plane — OTP supervision, fault isolation, hot code upgrade")
+    ("Zig for the FFI coprocessor — zero-cost C ABI, SIMD audio, no runtime GC")
+    ("Idris2 for ABI proofs — dependent types prove interface correctness at compile time")
+    ("WebRTC for media transport — browser-compatible, E2EE via Insertable Streams")
+    ("P2P mode as first-class — must work with zero server infrastructure")
+    ("AffineScript for the web client (migration from ReScript in progress) — resource-aware type safety")
+    ("No V-lang anywhere — removed 2026-04-16, replaced by Zig FFI")
+    ("No TypeScript, no Python, no Go, no npm — Deno for JS runtime")
   )
 
   ; === Sensitive Areas (if in doubt, ask) ===
   (ask-before-touching
-    ; *REMINDER: List areas where LLMs should check before modifying*
-    ; "src/abi/ — formal proofs, changes require re-verification"
-    ; "ffi/zig/ — C ABI boundary, changes affect all language bindings"
-    ; ".machine_readable/ — checkpoint files, format is specified"
+    "src/Burble/ABI/ — formal proofs; changes require re-verification"
+    "ffi/zig/src/coprocessor/ — C ABI boundary; changes affect all language bindings"
+    "client/web/burble-ai-bridge.js — P2P Claude-to-Claude channel; the family-use critical path"
+    "client/web/p2p-voice.html — WebRTC signaling + AI channel setup; hard to test without two browsers"
+    ".machine_readable/ — checkpoint files; format is specified by the 6a2 standard"
+    "server/lib/burble/media/ — SFU media engine; changes affect all connected peers"
+    "server/lib/burble/timing/ptp.ex — IEEE 1588 PTP; incorrect changes cause audible artefacts"
   )
 
   ; === Ecosystem Position ===
   (ecosystem
-    (belongs-to "{{MONOREPO_OR_STANDALONE}}")
-    (depends-on ("{{DEP1}}" "{{DEP2}}"))
-    (depended-on-by ("{{CONSUMER1}}" "{{CONSUMER2}}"))
+    (belongs-to "standalone (hyperpolymath estate)")
+    (depends-on ("VeriSimDB" "proven" "Avow" "Vext" "standards/lol"))
+    (depended-on-by ("IDApTIK (voice bridge)" "PanLL (voice engine)" "game-server-admin (plexus/nexus)"))
   )
 )

@@ -223,3 +223,115 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
 });
+
+// ---------------------------------------------------------------------------
+// Multi-message ordering: 100 messages burst, verify all arrive in order
+// ---------------------------------------------------------------------------
+
+Deno.test({
+  name: "AI Bridge ordering: 100-message burst A → B arrives in order, no drops",
+  async fn() {
+    const bridgeA = await startBridge(BRIDGE_A_HTTP);
+    const bridgeB = await startBridge(BRIDGE_B_HTTP);
+    let pageA, pageB;
+
+    try {
+      pageA = await connectMockPage(BRIDGE_A_WS);
+      pageB = await connectMockPage(BRIDGE_B_WS);
+      crossWire(pageA, pageB);
+      await new Promise((r) => setTimeout(r, 200));
+
+      const COUNT = 100;
+
+      // Send 100 messages as fast as possible from A.
+      for (let i = 0; i < COUNT; i++) {
+        const resp = await fetch(`http://127.0.0.1:${BRIDGE_A_HTTP}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "burst", seq: i }),
+        });
+        assert.strictEqual(resp.status, 200, `send ${i} should succeed`);
+      }
+
+      // Give a moment for async relay to settle.
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Drain all messages from B.
+      const resp = await fetch(`http://127.0.0.1:${BRIDGE_B_HTTP}/recv`);
+      const data = await resp.json();
+
+      assert.strictEqual(data.count, COUNT, `should receive all ${COUNT} messages`);
+
+      // Verify ordering: seq should be 0, 1, 2, ... 99.
+      for (let i = 0; i < COUNT; i++) {
+        assert.strictEqual(data.messages[i].seq, i, `message ${i} should have seq=${i}`);
+      }
+    } finally {
+      try { pageA?.ws.close(); } catch (_) {}
+      try { pageB?.ws.close(); } catch (_) {}
+      stopBridge(bridgeA);
+      stopBridge(bridgeB);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  },
+  sanitizeResources: false,
+  sanitizeOps: false,
+});
+
+// ---------------------------------------------------------------------------
+// Reconnect-resume: drop bridge WS mid-session, verify queue survives
+// ---------------------------------------------------------------------------
+
+Deno.test({
+  name: "AI Bridge reconnect: messages queued during WS drop are preserved on reconnect",
+  async fn() {
+    const bridge = await startBridge(BRIDGE_A_HTTP);
+    let page;
+
+    try {
+      // Connect mock page.
+      page = await connectMockPage(BRIDGE_A_WS);
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Simulate a received message being queued.
+      page.simulateRemoteDelivery({ type: "before-drop", n: 1 });
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Verify it's queued.
+      let resp = await fetch(`http://127.0.0.1:${BRIDGE_A_HTTP}/status`);
+      let status = await resp.json();
+      assert.strictEqual(status.queued, 1, "should have 1 queued message");
+
+      // Now close the page WS (simulates network drop).
+      page.ws.close();
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Status should show disconnected, but queued message should survive.
+      resp = await fetch(`http://127.0.0.1:${BRIDGE_A_HTTP}/status`);
+      status = await resp.json();
+      assert.strictEqual(status.connected, false, "should be disconnected after WS close");
+      assert.strictEqual(status.queued, 1, "queued message should survive WS drop");
+
+      // Reconnect a new mock page.
+      page = await connectMockPage(BRIDGE_A_WS);
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Status should show connected again.
+      resp = await fetch(`http://127.0.0.1:${BRIDGE_A_HTTP}/status`);
+      status = await resp.json();
+      assert.strictEqual(status.connected, true, "should be connected after reconnect");
+
+      // The original queued message should still be there (it was in the HTTP queue, not the WS).
+      const recvResp = await fetch(`http://127.0.0.1:${BRIDGE_A_HTTP}/recv`);
+      const recvData = await recvResp.json();
+      assert.strictEqual(recvData.count, 1, "original message should still be drainable");
+      assert.strictEqual(recvData.messages[0].type, "before-drop");
+    } finally {
+      try { page?.ws.close(); } catch (_) {}
+      stopBridge(bridge);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  },
+  sanitizeResources: false,
+  sanitizeOps: false,
+});

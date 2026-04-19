@@ -10,17 +10,32 @@ last-updated = "2026-04-11"
 
 [project]
 name = "burble"
-purpose = ""  # TODO: describe project purpose
-role = ""  # TODO: describe project role  # e.g. ffi-infrastructure, cli-tool, library, service
+purpose = "Self-hostable voice-first communications platform with P2P Claude-to-Claude AI data channel"
+role = "service"
 
 [position-in-ecosystem]
-tier = "infrastructure"  # 1 | 2 | infrastructure
+tier = "1"
 
 [related-projects]
-# relationship types: sibling-standard, dependency, dependent, inspiration, potential-consumer
-# - { name = "language-bridges", relationship = "sibling-standard" }
-# - { name = "hypatia", relationship = "potential-consumer" }
+projects = [
+  { name = "VeriSimDB", relationship = "dependency", note = "Sole data store for users, tokens, room config, provenance" },
+  { name = "proven", relationship = "dependency", note = "Formally verified crypto, password, UUID, email, path safety bridge" },
+  { name = "standards/lol", relationship = "dependency", note = "Multilingual corpus for i18n support" },
+  { name = "IDApTIK", relationship = "dependent", note = "Asymmetric co-op game consuming Burble voice bridge (VoiceBridge, spatial audio)" },
+  { name = "PanLL", relationship = "dependent", note = "Panel workspace consuming BurbleEngine, PanelBus events, VoiceTag hooks" },
+  { name = "game-server-admin", relationship = "dependent", note = "Consumes burble plexus/nexus for multi-server voice coordination" },
+  { name = "gossamer", relationship = "sibling-standard", note = "Both use Zig FFI + Idris2 ABI pattern; gossamer provides webview runtime" },
+  { name = "typed-wasm", relationship = "potential-consumer", note = "Could type-check Burble's WASM SNIF modules against typed-wasm's level system" },
+  { name = "ephapax", relationship = "sibling-standard", note = "Client desktop shell (.eph files) uses Ephapax's dyadic type system" },
+  { name = "Avow", relationship = "dependency", note = "Consent attestation framework — trust chain for room join/leave" },
+  { name = "Vext", relationship = "dependency", note = "Hash chain + capability subsumption for extension sandboxing" },
+]
 
 [integration-points]
-# External systems this project connects to
-# - { system = "gitbot-fleet", direction = "outbound", protocol = "repository_dispatch" }
+points = [
+  { system = "signaling/relay.js", direction = "internal", protocol = "HTTP PUT/GET, ephemeral SDP, 60s TTL" },
+  { system = "burble-ai-bridge.js", direction = "internal", protocol = "HTTP REST + WebSocket, port 6474/6475" },
+  { system = "VeriSimDB", direction = "outbound", protocol = "HTTP REST + ClickHouse" },
+  { system = "gitbot-fleet", direction = "outbound", protocol = "repository_dispatch (CI)" },
+  { system = "hypatia", direction = "inbound", protocol = "Hypatia scan rules via .hypatia/ config" },
+]

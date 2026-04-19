@@ -9,27 +9,49 @@ version = "0.1.0"
 last-updated = "2026-04-11"
 
 [deployment]
-# method = "gitops"  # gitops | manual | ci-triggered
-# target = "container"  # container | binary | library | wasm
+method = "manual"
+target = "container"
+container-runtime = "podman"
+container-base = "Chainguard"
+compose-file = "containers/compose.toml"
+notes = "P2P mode needs no deployment — just open p2p-voice.html + run bridge. Server mode uses `just up` (podman-compose) or `just server` (dev)."
+
+[p2p-quickstart]
+steps = [
+  "1. deno run --allow-net --allow-env client/web/burble-ai-bridge.js &",
+  "2. Open client/web/p2p-voice.html in browser",
+  "3. Exchange room codes or use signaling relay (just relay on port 6476)",
+  "4. Verify green 'bridge online' dot in AI Channel card",
+  "5. Test: curl http://localhost:6474/status",
+]
 
 [incident-response]
-# 1. Check .machine_readable/STATE.a2ml for current status
-# 2. Review recent commits and CI results
-# 3. Run `just validate` to check compliance
-# 4. Run `just security` to audit for vulnerabilities
+steps = [
+  "1. Check .machine_readable/6a2/STATE.a2ml for current status + known blockers",
+  "2. Review recent commits and CI results (git log -10, gh run list)",
+  "3. Run `just test` (Elixir + Zig tests)",
+  "4. Run `just scan` (panic-attacker static analysis)",
+  "5. For AI bridge issues: check browser console for [Burble AI] errors",
+  "6. For audio issues: check server logs for [PTP] [MediaEngine] [Pipeline] prefixes",
+]
 
 [release-process]
-# 1. Update version in STATE.a2ml, META.a2ml, Justfile
-# 2. Run `just release-preflight` (validate + quality + security + maint-hard-pass)
-# 3. Optional local permission hardening: `just perms-snapshot && just perms-lock`
-# 4. Tag and push
-# 5. Restore local permissions if needed: `just perms-restore`
-# 6. Run `just container-push` if applicable
+steps = [
+  "1. Update version in STATE.a2ml, META.a2ml, Justfile",
+  "2. Run `just test` — all green",
+  "3. Run `deno test --allow-net --allow-env --allow-run client/web/tests/` — AI bridge tests green",
+  "4. Run `just scan` — panic-attacker clean",
+  "5. Update CHANGELOG.md",
+  "6. Tag: git tag -a v<version> -m 'Release <version>'",
+  "7. Push: git push origin main --tags",
+  "8. Container: `just container-build && just container-push` if applicable",
+]
 
 [maintenance-operations]
-# Baseline audit:
-#   just maint-audit
-# Hard release gate:
-#   just maint-hard-pass
-# Permission audit:
-#   just perms-audit
+operations = [
+  { name = "full-test", command = "just test", frequency = "every commit" },
+  { name = "ai-bridge-test", command = "deno test --allow-net --allow-env --allow-run client/web/tests/", frequency = "every commit touching client/web/" },
+  { name = "static-scan", command = "just scan", frequency = "pre-release" },
+  { name = "proof-check", command = "cd src && idris2 --check ABI.idr", frequency = "when src/Burble/ABI/*.idr changes" },
+  { name = "zig-ffi-test", command = "just test-ffi", frequency = "when ffi/zig/ changes" },
+]

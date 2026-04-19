@@ -1,0 +1,202 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Claude-to-Claude Protocol Patterns — Burble AI Data Channel
+//
+// Conventions for structured JSON messages exchanged between two Claude Code
+// instances over the P2P AI bridge (burble-ai-bridge.js → WebRTC DataChannel).
+//
+// These patterns are SUGGESTIONS, not enforced schemas. Any valid JSON works.
+// But following them means both sides can parse each other's messages without
+// ad-hoc guessing, which is the whole point.
+//
+// Transport:
+//   curl POST http://localhost:6474/send -H 'Content-Type: application/json' -d '...'
+//   curl GET  http://localhost:6474/recv
+//
+// Max payload: 64 KiB per message. Queue cap: 1000 messages (oldest evicted).
+
+{
+  "protocol": "burble-ai",
+  "version": "0.1.0",
+
+  // ──────────────────────────────────────────────────────────────────────
+  // LIFECYCLE
+  // ──────────────────────────────────────────────────────────────────────
+
+  "lifecycle": {
+    "hello": {
+      "description": "First message after connection. Identifies the Claude instance.",
+      "example": {
+        "type": "hello",
+        "from": "dad-claude",
+        "capabilities": ["code-review", "test-runner", "file-edit"],
+        "repo": "burble",
+        "branch": "claude/review-work-allocation-F32Sl"
+      }
+    },
+
+    "ping": {
+      "description": "Keep-alive / liveness check. Expect a pong in reply.",
+      "example": { "type": "ping", "ts": 1713283200000 }
+    },
+
+    "pong": {
+      "description": "Reply to ping.",
+      "example": { "type": "pong", "ts": 1713283200000 }
+    },
+
+    "bye": {
+      "description": "Graceful disconnect. Peer should stop sending.",
+      "example": { "type": "bye", "from": "dad-claude", "reason": "session ending" }
+    }
+  },
+
+  // ──────────────────────────────────────────────────────────────────────
+  // TASK DELEGATION
+  // ──────────────────────────────────────────────────────────────────────
+
+  "tasks": {
+    "task": {
+      "description": "Ask the other Claude to perform a specific action.",
+      "fields": {
+        "type": "task",
+        "id": "Unique task ID (UUID or short slug). Caller generates this.",
+        "from": "Sender identity string.",
+        "action": "What to do: 'review', 'test', 'fix', 'build', 'search', 'explain'.",
+        "target": "File path, function name, or search query.",
+        "context": "Optional: extra context the other side needs.",
+        "priority": "Optional: 'high' | 'normal' | 'low'. Default 'normal'."
+      },
+      "example": {
+        "type": "task",
+        "id": "t-001",
+        "from": "dad-claude",
+        "action": "review",
+        "target": "server/lib/burble/llm/protocol.ex",
+        "context": "parse_frame has a bug: String.split returns list, not tuple"
+      }
+    },
+
+    "result": {
+      "description": "Response to a task. References the original task ID.",
+      "fields": {
+        "type": "result",
+        "id": "Same as the task ID this responds to.",
+        "from": "Responder identity string.",
+        "status": "'ok' | 'error' | 'partial' | 'declined'.",
+        "findings": "Array of findings / changes made / errors encountered.",
+        "summary": "One-sentence human-readable summary."
+      },
+      "example": {
+        "type": "result",
+        "id": "t-001",
+        "from": "son-claude",
+        "status": "ok",
+        "summary": "Fixed parse_frame: replaced tuple match with list match.",
+        "findings": [
+          {"file": "server/lib/burble/llm/protocol.ex", "line": 123, "change": "destructure list, not tuple"}
+        ]
+      }
+    },
+
+    "progress": {
+      "description": "Intermediate status update for long-running tasks.",
+      "example": {
+        "type": "progress",
+        "id": "t-001",
+        "from": "son-claude",
+        "percent": 50,
+        "message": "Found the bug, writing the fix now"
+      }
+    }
+  },
+
+  // ──────────────────────────────────────────────────────────────────────
+  // CHAT (free-form conversation)
+  // ──────────────────────────────────────────────────────────────────────
+
+  "chat": {
+    "description": "Free-form message. Not tied to a task.",
+    "example": {
+      "type": "chat",
+      "from": "dad-claude",
+      "message": "Working on the FFI layer now. Don't touch ffi/zig/ for a few minutes."
+    }
+  },
+
+  // ──────────────────────────────────────────────────────────────────────
+  // FILE EXCHANGE
+  // ──────────────────────────────────────────────────────────────────────
+
+  "files": {
+    "file-request": {
+      "description": "Ask the other side to read a file and send its contents.",
+      "example": {
+        "type": "file-request",
+        "from": "dad-claude",
+        "path": "server/lib/burble/llm.ex"
+      }
+    },
+
+    "file-contents": {
+      "description": "Send file contents in response to a file-request.",
+      "example": {
+        "type": "file-contents",
+        "from": "son-claude",
+        "path": "server/lib/burble/llm.ex",
+        "contents": "defmodule Burble.LLM do ..."
+      },
+      "note": "Keep under 64 KiB. For large files, send line ranges."
+    },
+
+    "diff": {
+      "description": "Send a unified diff for review or application.",
+      "example": {
+        "type": "diff",
+        "from": "son-claude",
+        "path": "server/lib/burble/llm/protocol.ex",
+        "diff": "--- a/server/lib/burble/llm/protocol.ex\n+++ b/server/lib/burble/llm/protocol.ex\n@@ -117,2 +117,2 @@\n-    {_type, rest} = String.split(data, \"\\n\", parts: 2)\n+    [_type, rest] = String.split(data, \"\\n\", parts: 2)"
+      }
+    }
+  },
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SYNC / COORDINATION
+  // ──────────────────────────────────────────────────────────────────────
+
+  "sync": {
+    "status-request": {
+      "description": "Ask what the other side is currently doing.",
+      "example": { "type": "status-request", "from": "dad-claude" }
+    },
+
+    "status": {
+      "description": "Report current state.",
+      "example": {
+        "type": "status",
+        "from": "son-claude",
+        "working-on": "Phase 1 item 3: jitter buffer sync",
+        "files-modified": ["server/lib/burble/media/peer.ex"],
+        "uncommitted-changes": true
+      }
+    },
+
+    "lock": {
+      "description": "Soft lock on a file/directory. Peer should avoid editing it until unlock.",
+      "example": {
+        "type": "lock",
+        "from": "dad-claude",
+        "path": "ffi/zig/src/coprocessor/",
+        "reason": "rewriting audio.zig"
+      }
+    },
+
+    "unlock": {
+      "description": "Release a soft lock.",
+      "example": {
+        "type": "unlock",
+        "from": "dad-claude",
+        "path": "ffi/zig/src/coprocessor/"
+      }
+    }
+  }
+}

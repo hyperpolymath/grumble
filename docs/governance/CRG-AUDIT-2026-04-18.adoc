@@ -1,0 +1,222 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+
+= Burble — CRG Audit (2026-04-18)
+Jonathan D.A. Jewell
+2026-04-18
+:toc:
+:sectnums:
+
+== Scope and Standard
+
+Evaluates `burble` against *Component Readiness Grades v2.0 (STRICT)*.
+
+- Standard: `standards/component-readiness-grades/COMPONENT-READINESS-GRADES.md`
+- Criteria boilerplate: `rsr-template-repo/docs/governance/CRG-CRITERIA.adoc`
+- Self-declared grade:
+  * `.machine_readable/6a2/STATE.a2ml` -> `[crg] grade = "C"`
+  * Same file: `version = "1.1.0-pre"`, `completion-percentage = 72`
+- Audit date: 2026-04-18
+
+This audit grades Burble *as-is today*, not aspirationally.
+
+== v2.0 Strictness Recap
+
+[cols="1,3,4"]
+|===
+| Grade | Release Stage | Hard Requirement (v2.0)
+
+| X | None             | Untested.
+| F | Reject           | Harmful, wasteful, or superseded.
+| E | Pre-alpha        | >=1 test, failures documented.
+| D | Alpha            | Test matrix + scope documented + *RSR compliance mandatory*.
+| C | Alpha-stable     | Dogfooded, CI green, *deep per-file + per-directory annotation*.
+| B | Beta             | 6+ *diverse* external targets, issues fed back.
+| A | Stable           | Real-world external feedback confirms value; no harm.
+|===
+
+== Evidence Inventory (verified 2026-04-18)
+
+=== Structural compliance (D floor)
+
+[cols="2,1,3"]
+|===
+| Item | State | Source
+
+| RSR mandatory workflows (17+)
+| PRESENT (21)
+| `.github/workflows/`
+
+| `.machine_readable/6a2/` canonical A2ML
+| PRESENT (STATE, META, ECOSYSTEM, AGENTIC, NEUROSYM, PLAYBOOK)
+| `.machine_readable/6a2/`
+
+| `0-AI-MANIFEST.a2ml`
+| PRESENT
+| Root
+
+| `EXPLAINME` + readiness docs
+| PARTIAL
+| Root `EXPLAINME.adoc` exists; no `docs/READINESS.md` or `docs/READINESS.adoc`
+
+| `docs/RSR_OUTLINE.adoc`
+| PRESENT
+| `docs/RSR_OUTLINE.adoc`
+
+| `guix.scm` + `flake.nix`
+| PRESENT
+| Root
+
+| `.well-known/` (`security.txt`, `ai.txt`, `humans.txt`)
+| PRESENT
+| `.well-known/`
+
+| `Containerfile` (no Dockerfile)
+| PRESENT
+| Root `Containerfile`; no `Dockerfile*` found
+
+| Contractile trident
+| PRESENT
+| `.machine_readable/INTENT.contractile`, `TRUST.contractile`, `MUST.contractile`, `ADJUST.contractile`
+
+| `Justfile` + no `Makefile`
+| PRESENT
+| Root `Justfile`; no `Makefile`
+|===
+
+RSR compliance verdict: *met with documentation caveat*. D floor is satisfied.
+
+=== Code and proofs
+
+[cols="2,1,3"]
+|===
+| Item | Count | Notes
+
+| Idris2 modules (`src/**/*.idr`)
+| 12 files, 1,980 LOC
+| ABI and interface proof surface present.
+
+| Zig FFI modules (`ffi/zig/src/**/*.zig`)
+| 8 files, 1,888 LOC
+| Coprocessor and ABI/FFI layer present.
+
+| Postulates / axiomatic debt
+| 1 `postulate`, 0 `believe_me`, 0 `assert_total`
+| `src/Burble/ABI/MediaPipeline.idr` contains `postulate resampleFrame`; proof status doc marks this as planned Zig FFI migration.
+
+| Dangerous-pattern scan (`Admitted`, `sorry`, `unsafeCoerce`, `Obj.magic`)
+| 0 in primary code trees
+| Grepped `src/`, `server/`, `client/`, `verification/` on 2026-04-18.
+|===
+
+=== Test matrix
+
+Evidence sources:
+
+- `TEST-NEEDS.md` claims CRG-C achieved and cites:
+  * 222 ExUnit tests
+  * 19 signaling E2E tests
+  * 8 StreamData property tests
+  * 13 session concurrency tests
+- Repository test files (owned, excluding deps): 30 `*_test.exs`, 4 JS test files, 1 Zig test file.
+- Local execution on 2026-04-18:
+  * `cd ffi/zig && zig build test` -> PASS (exit 0)
+  * `cd server && mix test --no-start` -> FAIL in environment while compiling `:quicer` (`FindBin.pm` missing in Perl toolchain during OpenSSL configure)
+
+CI evidence gap:
+
+- 21 workflows exist, but no workflow contains direct test commands (`mix test`, `zig build test`, `just test`, `deno test`, etc.).
+- Release workflow builds on tag pushes, but regular push/PR workflows do not provide an explicit test-pass signal.
+
+=== Annotation depth
+
+Per-directory orientation is uneven in implementation-critical trees:
+
+- Selected top-level subtree README coverage: *5/11* (`client`, `ffi`, `server`, `tests`, `signaling`, `scripts` lack orienting READMEs).
+- Core implementation roots first-level README coverage (`src`, `server`, `client`, `ffi`, `tests`): *5/23*.
+- `docs/` has mature structure (`architecture` 4 files, `decisions` 5 files, `reports` 13 files), but code-near subtree orientation remains thin.
+
+This does not satisfy v2.0 C's "deep per-file + per-directory annotation" expectation.
+
+=== Dogfooding / home-stable evidence
+
+- `.machine_readable/6a2/STATE.a2ml` has no `[dogfooding-status]` section.
+- No `DOGFOOD-LOG` file found under `docs/` (including `docs/practice/`).
+
+Without dated, concrete dogfooding evidence, C cannot be awarded under v2.0 strictness.
+
+=== External validation (B/A)
+
+- No `[external-targets]`, `[issues-fed-back]`, or `[field-signal]` sections in `STATE.a2ml`.
+
+B and A are not currently supportable.
+
+== Grade x Evidence Matrix
+
+[cols="1,1,3,3"]
+|===
+| Grade | Met? | Evidence supporting | Evidence against / gaps
+
+| X
+| n/a
+| Tests and runnable code exist
+| —
+
+| F
+| n/a
+| Not superseded, no harm signal in this audit
+| —
+
+| E
+| ✓
+| Multiple test suites and quality gates exist
+| —
+
+| D
+| ✓
+| RSR structural floor present; scope and phase documented; test matrix exists
+| `docs/READINESS.*` missing (documentation caveat)
+
+| C
+| ✗
+| Mature docs/governance material and substantial test inventory
+| No `[dogfooding-status]`, no dogfood log, no explicit CI test-pass workflow evidence, weak implementation-subtree README coverage
+
+| B
+| ✗
+| —
+| No external-target evidence
+
+| A
+| ✗
+| —
+| No field-signal evidence
+|===
+
+== Verdict
+
+*Current CRG grade: **D (Alpha)**.*
+
+This diverges from the self-declared `C` claim. Under v2.0 strictness,
+Burble is technically substantial but does not yet meet C's evidence bar.
+
+Strong positive signals:
+
+1. D-floor structure is present (21 workflows, canonical `.machine_readable/6a2/`, contractile trident).
+2. Real implementation and proof surface exists (Idris2 ABI modules + Zig FFI + server/client stacks).
+3. Test inventory is non-trivial and partially runnable locally (`zig build test` passed).
+
+Immediate blockers to C:
+
+1. Add `[dogfooding-status]` in `STATE.a2ml` with dated evidence entries.
+2. Add and maintain a concrete dogfood log in `docs/practice/`.
+3. Add explicit CI test jobs for server and Zig test paths, then record recent green runs.
+4. Raise README orientation coverage in `server/`, `client/`, `ffi/`, and `tests/`.
+5. Add `docs/READINESS.md` (or `.adoc`) aligned to v2.0 strict criteria.
+
+== Related Files
+
+- `.machine_readable/6a2/STATE.a2ml` — updated to `D` with demotion reference.
+- `docs/governance/CRG-LIFT-PLAN-2026-04-18.adoc` — D->C action plan.
+
+_End of audit._

@@ -1,1 +1,12 @@
 = Effects Unit
+
+Effects checklist:
+
+* [x] Current strengths/weaknesses captured by prioritized criterion.
+* [x] Competitive challenge baseline stated with explicit evidence gaps.
+* [ ] Publish reliability metrics by topology mode.
+* [ ] Publish interop pass/fail matrix (Groove + IndieWeb pathways).
+* [ ] Publish accessibility and security trend deltas per release.
+* [ ] Capture gameplay deployment evidence in active environments.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

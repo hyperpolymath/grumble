@@ -131,10 +131,10 @@ zig build
 ```bash
 # Copy WASM module to Burble
 cp /var/mnt/eclipse/repos/snif/priv/safe_nif_ReleaseSafe.wasm \
-   /var/mnt/eclipse/repos/burble/server/priv/snif/burble_fft.wasm
+   /var/mnt/eclipse/repos/developer-ecosystem/burble/server/priv/snif/burble_fft.wasm
 
 # Install dependencies
-cd /var/mnt/eclipse/repos/burble/server
+cd /var/mnt/eclipse/repos/developer-ecosystem/burble/server
 mix deps.get
 
 # Build release

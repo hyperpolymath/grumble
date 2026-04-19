@@ -1,1 +1,12 @@
 = Corrective Unit
+
+Active corrective checklist:
+
+* [x] Add msquic tag guard (`scripts/ensure-msquic-version.sh`).
+* [x] Add quicer prerequisite guard (`scripts/ensure-quicer-prereqs.sh`).
+* [x] Fix aspect test harness broken-pipe failure under `pipefail`.
+* [ ] Remediate missing Perl `FindBin.pm` in environment.
+* [ ] Re-run `just test-server` to green baseline.
+* [ ] Triage and reduce `panic-attack assail` findings (57 -> target threshold).
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

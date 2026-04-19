@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+
+= Burble — CRG Lift Plan (D -> C)
+Jonathan D.A. Jewell
+2026-04-18
+:toc:
+:sectnums:
+
+== Context
+
+`docs/governance/CRG-AUDIT-2026-04-18.adoc` demoted Burble from `C` to `D`
+under CRG v2.0 STRICT. This plan defines the minimum evidence work required
+to re-earn `C`.
+
+== Exit Criteria for C
+
+All items below must be complete and evidenced in-repo:
+
+1. `[dogfooding-status]` exists in `.machine_readable/6a2/STATE.a2ml` with dated, concrete entries.
+2. `docs/practice/DOGFOOD-LOG.adoc` exists and records repeatable home-stable runs.
+3. CI contains explicit test-pass workflows for both Elixir server tests and Zig tests on push/PR.
+4. `docs/READINESS.md` (or `.adoc`) exists and is aligned to CRG v2.0 strictness.
+5. Per-directory orientation coverage is materially improved in core implementation trees (`server/`, `client/`, `ffi/`, `tests/`).
+
+== Work Packages
+
+=== WP1 — Dogfooding Evidence (Owner: core maintainers)
+
+- Add `[dogfooding-status]` to `.machine_readable/6a2/STATE.a2ml`.
+- Create `docs/practice/DOGFOOD-LOG.adoc` and log at least 5 dated runs:
+  * room lifecycle and signaling
+  * voice pipeline
+  * moderation/permissions path
+  * diagnostics/self-test path
+  * recovery/restart path
+- Link each dogfood entry to a commit, issue, or report artifact.
+
+=== WP2 — CI Test Signal (Owner: CI maintainers)
+
+- Add a push/PR workflow that runs:
+  * `cd server && mix test --no-start`
+  * `cd ffi/zig && zig build test`
+- Record latest passing run SHA/date in `STATE.a2ml` notes.
+- Keep release-only build jobs as supplemental, not primary C evidence.
+
+=== WP3 — Annotation Depth (Owner: docs + module owners)
+
+- Add orienting READMEs for:
+  * `server/`, `server/lib/`, `server/test/`
+  * `client/`, `client/lib/`, `client/web/`
+  * `ffi/`, `ffi/zig/`, `ffi/zig/src/`, `ffi/zig/test/`
+  * `tests/`, `tests/aspect/`, `tests/fuzz/`
+- Minimum README content:
+  * purpose and boundary of the subtree
+  * entrypoints
+  * invariants/safety constraints
+  * how to run relevant tests
+
+=== WP4 — Readiness Document (Owner: governance/docs)
+
+- Add `docs/READINESS.md` with:
+  * current CRG grade and date
+  * criteria-by-criteria evidence table
+  * explicit blockers to next grade
+  * links to dogfood log and CI runs
+
+== Sequencing
+
+1. WP1 (dogfooding evidence) and WP2 (CI test signal) in parallel.
+2. WP3 (annotation depth) next; these are mostly documentation changes.
+3. WP4 (READINESS) last, after evidence is present.
+4. Re-run CRG audit and only then consider D->C promotion.
+
+== Risk Notes
+
+- `mix test` currently fails in this environment due missing Perl `FindBin.pm`
+  while compiling `quicer`; CI job should pin/provide toolchain dependencies
+  so test signal is reproducible.
+- Do not promote back to C based on claimed counts alone; only promote on
+  dated in-repo evidence.
+
+_End of lift plan._

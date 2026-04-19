@@ -1,1 +1,11 @@
 = Adaptive Unit
+
+Active adaptive checklist:
+
+* [x] Capture Burble nexus/plexus topology interpretation in architecture notes.
+* [x] Capture Groove/Gossamer/Airborne Submarine Squadron integration context.
+* [x] Make server test flow fail early on missing prerequisites.
+* [ ] Add explicit EPHAPAX linear/affine transition readiness item to roadmap.
+* [ ] Convert IndieWeb ADR scope into phased implementation tracker.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

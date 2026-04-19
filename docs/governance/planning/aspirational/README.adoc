@@ -1,0 +1,10 @@
+= Aspirational Unit
+
+Aspirational checklist:
+
+* [ ] Deliver opt-in IndieWeb-native bundle (IndieAuth + Micropub + Webmention + microformats).
+* [ ] Consume EPHAPAX linear choreographic and affine dyadic typing changes at root.
+* [ ] Validate typed-WASM path where it materially improves interop/dependability.
+* [ ] Publish field-deployment evidence for nexus/plexus modes in gameplay contexts.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

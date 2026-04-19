@@ -1,1 +1,14 @@
 = Maintenance Axis
+
+Priority order: `corrective > adaptive > perfective`
+
+Current runbook status is tracked in:
+
+* link:../SITREP-2026-04-17-burble-baseline.adoc[SITREP-2026-04-17-burble-baseline.adoc]
+
+Cycle checklist:
+
+* [x] Corrective unit updated for current blockers/fixes.
+* [x] Adaptive unit updated for scope/reality alignment.
+* [x] Perfective unit updated for quality improvements.
+* [ ] Full cycle closed with all blockers removed.

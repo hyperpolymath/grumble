@@ -1,0 +1,228 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
+= Burble Sitrep and Baselining (2026-04-17)
+:toc: preamble
+:icons: font
+
+Date: 2026-04-17 +
+Branch: `main` +
+HEAD: `4d6fd29`
+
+== Scope And Intent
+
+This sitrep captures three requested sets in one place and marks progress with
+explicit cross-offs:
+
+* Corrective, adaptive, and perfective maintenance list.
+* Must, should, could, aspirational list.
+* Criterion-based strengths/weaknesses and CRG/TRG status where relevant.
+
+== Quick Answer: "Is Burble mostly Ephapax?"
+
+No, not by repository composition.
+
+Based on extension counts (file-count level, excluding deps/build outputs):
+
+* `*.ex` = 98
+* `*.exs` = 38
+* `*.res` = 36
+* `*.zig` = 18
+* `*.idr` = 12
+* `*.eph` = 6
+
+Burble has active Ephapax use, but the dominant implementation footprint is
+Elixir, with ReScript/Zig/Idris2 support layers and large AsciiDoc governance.
+
+== Baseline Evidence (This Run)
+
+[cols="1,3,1",options="header"]
+|===
+| Command | Purpose | Result
+
+| `just doctor`
+| Toolchain preflight
+| ✅ pass
+
+| `just guard-msquic`
+| Embedded msquic tag guard (`v2.3.8`)
+| ✅ pass
+
+| `just guard-quicer-prereqs`
+| Source-build prereq guard for quicer/msquic
+| ❌ fail (`FindBin.pm` missing)
+
+| `just test-server`
+| Server test baseline
+| ❌ fail early at guard (missing `FindBin.pm`)
+
+| `just test-ffi`
+| Zig FFI tests
+| ✅ pass
+
+| `just aspect`
+| Aspect checks
+| ✅ pass (after script corrective fix)
+
+| `just assail`
+| Security/compliance scan
+| ⚠ pass with findings (57 weak points)
+|===
+
+== Set 1: Corrective / Adaptive / Perfective
+
+=== Corrective
+
+* [x] Added msquic version guard and wired it into `test-server`.
+* [x] Added quicer source-build prerequisite guard (`FindBin.pm`, `cmake`, `make/ninja`).
+* [x] Fixed brittle aspect script that failed under `pipefail` (broken pipe pattern).
+* [ ] Resolve missing Perl core module (`FindBin.pm`) on target build environment.
+* [ ] Reduce `panic-attack assail` findings from 57 to agreed threshold.
+* [ ] Re-run full server test suite successfully after prerequisite fix.
+
+=== Adaptive
+
+* [x] Updated test flow to fail fast on environmental prereq gaps instead of deep compile failure.
+* [x] Captured Game Server Admin / Groove / Gossamer / Airborne Submarine Squadron linkage in architecture memo.
+* [ ] Add explicit EPHAPAX type-transition readiness work item:
+  linear choreographic + affine dyadic implications on Burble ABI/FFI seams.
+* [ ] Add explicit IndieWeb integration phase plan from ADR 0002 into roadmap/implementation tracker.
+
+=== Perfective
+
+* [x] Added guard recipes to improve repeatability and operator feedback.
+* [ ] Add deterministic CI job matrix for `doctor`, guards, `aspect`, `test-server`, `test-ffi`, `assail`.
+* [ ] Add quality gate policy mapping to prioritized aspect order
+  (dependability > interoperability > accessibility > security > usability > versatility > functionality > maintainability).
+* [ ] Promote architecture notes into persistent topology + deployment playbooks.
+
+== Set 2: Must / Should / Could / Aspirational
+
+=== Must
+
+* [x] Keep IndieWeb optional (not required) while designing first-class integration seams.
+* [x] Keep ABI in Idris2 and FFI in pure Zig with thin C adapter only as needed.
+* [x] Keep msquic version guard active for quicer compatibility.
+* [ ] Unblock quicer source builds on this environment (`FindBin.pm` availability).
+* [ ] Get `test-server` green on current branch.
+
+=== Should
+
+* [x] Maintain cross-repo context with Gossamer and Airborne Submarine Squadron.
+* [ ] Add Groove manifest/proof conformance tests against Gossamer schema/proofs.
+* [ ] Add deployment recipes for monarchic and oligarchic nexus modes.
+* [ ] Add accessibility/usability benchmark evidence to verification docs.
+
+=== Could
+
+* [x] Add `guard-quicer-prereqs` as explicit operator command.
+* [ ] Add dedicated `guard-toolchain` aggregate recipe.
+* [ ] Add performance/versatility scorecards for coprocessor and voice channel paths.
+* [ ] Add staged IndieWeb rollout flags by tenant/user scope.
+
+=== Aspirational
+
+* [ ] Burble-native IndieWeb bundle (IndieAuth + Micropub + Webmention + microformats) with opt-in UX polish.
+* [ ] EPHAPAX linear/affine typing transition consumed at root and propagated cleanly into Burble interfaces.
+* [ ] Typed-WASM path validated where it materially strengthens interoperability and dependability.
+* [ ] Active field deployment evidence across nexus/plexus topologies in gameplay contexts.
+
+== Set 3: Criterion-Based Strength/Weakness (Prioritized)
+
+[cols="2,3,3,1",options="header"]
+|===
+| Criterion | Current strength | Current weakness / risk | Direction
+
+| Dependability
+| Guards now fail fast on msquic/quicer prereqs; FFI tests pass.
+| `test-server` blocked by missing Perl module; full server reliability not yet demonstrated in this environment.
+| 🔴
+
+| Interoperability
+| Groove endpoints and manifest model exist; cross-repo linkage with Gossamer is present.
+| Formal contract conformance tests against canonical Gossamer artifacts not yet in place.
+| 🟠
+
+| Accessibility
+| Accessibility test surface exists in server tests and docs.
+| No current baseline evidence run in this session for accessibility outcome quality.
+| 🟠
+
+| Security
+| `assail` integrated and runnable.
+| 57 weak points remain and need triage/reduction.
+| 🟠
+
+| Usability
+| Clear Justfile surface; additional guards improve operator feedback.
+| Setup still fails late without environment remediation; onboarding path needs better auto-heal.
+| 🟠
+
+| Versatility
+| Multiple topology modes and multi-surface stack (server/web/desktop/FFI).
+| Limited hard evidence of tested behavior across all topology modes in active deployment.
+| 🟠
+
+| Functionality
+| Core room/voice/admin surfaces are substantial and tested in parts.
+| Key integration tracks (IndieWeb-native, gameplay deep integration) are not yet complete.
+| 🟠
+
+| Maintainability
+| Governance scaffolding exists and is now populated with checklists.
+| Many governance units were placeholders before this run; CI/doc synchronization still needed.
+| 🟠
+|===
+
+== CRG And TRG Snapshot
+
+=== CRG (Component Readiness) Provisional
+
+[cols="2,1,3",options="header"]
+|===
+| Component slice | Provisional grade | Basis
+
+| Server test/build path (this environment)
+| D
+| Partially working but blocked by missing Perl module for quicer source build.
+
+| FFI Zig coprocessor tests
+| C
+| Local tests pass in this run (`just test-ffi`).
+
+| Governance/maintenance discipline
+| D
+| Core structure exists and now has active checklists, but evidence loops are incomplete.
+
+| IndieWeb integration
+| X
+| ADR/proposal exists; implementation not yet present.
+|===
+
+=== TRG (Toolchain Readiness) Relevance
+
+TRG is relevant only to Burble's toolchain-like surfaces (ABI/FFI and codegen
+seams), not to Burble as a whole product stack.
+
+Current status: `TRG-X` for Burble ABI/FFI pipeline as an audited toolchain
+surface, because no formal TRG audit pack has been executed yet.
+
+== Normative Competitive Challenge
+
+Burble is in a strong conceptual position (governance-aware topology modes,
+Idris2/Zig seam policy, Groove-aligned architecture), but market-comparable
+RTC stacks typically win on operational evidence density.
+
+To challenge incumbents normatively:
+
+* [ ] Publish reproducible reliability metrics per topology mode.
+* [ ] Publish interop pass/fail matrix for Groove + IndieWeb pathways.
+* [ ] Publish accessibility/security deltas per release.
+* [ ] Demonstrate active gameplay deployment evidence (not only provisioning/configuration use).
+
+== Next Actions (Ordered)
+
+1. Install/fix Perl core module path so `FindBin.pm` resolves.
+2. Re-run `just test-server` and capture first green baseline.
+3. Triage `assail` 57 findings into high/medium/low corrective queue.
+4. Start IndieWeb phase-1 implementation from ADR 0002 behind opt-in flags.
+5. Add formal Groove/Gossamer contract conformance tests.

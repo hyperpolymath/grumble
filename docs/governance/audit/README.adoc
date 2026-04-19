@@ -1,1 +1,14 @@
 = Audit Axis
+
+Priority order: `systems > compliance > effects`
+
+Current criterion-based baseline is tracked in:
+
+* link:../SITREP-2026-04-17-burble-baseline.adoc[SITREP-2026-04-17-burble-baseline.adoc]
+
+Checklist:
+
+* [x] Systems unit updated.
+* [x] Compliance unit updated.
+* [x] Effects unit updated.
+* [ ] Full audit loop completed after server baseline is green.

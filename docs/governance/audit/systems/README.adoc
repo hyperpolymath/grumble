@@ -1,1 +1,11 @@
 = Systems Unit
+
+Systems checklist:
+
+* [x] `just doctor` baseline run and recorded.
+* [x] msquic guard in place and passing.
+* [x] quicer prereq guard in place (currently failing as expected on missing `FindBin.pm`).
+* [x] `just aspect` passing after corrective script hardening.
+* [ ] `just test-server` green baseline.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

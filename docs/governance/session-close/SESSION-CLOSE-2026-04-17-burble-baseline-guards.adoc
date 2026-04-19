@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
+= Session Close — Burble baseline, guards, and governance fill-in
+:protocol: continuity / planned-session-close
+:protocol-version: 1.1.0
+:session-id: 2026-04-17-burble-baseline-guards
+:session-start: 2026-04-17 11:20 UTC
+:session-end: 2026-04-17 12:19 UTC
+:assistant: Codex (GPT-5)
+:author: Jonathan D.A. Jewell
+:format-schema: session-close.v1.enriched
+:archival-convention: timestamped append-only
+:cross-references: docs/governance/SITREP-2026-04-17-burble-baseline.adoc, docs/architecture/BURBLE-GAMEPLAY-GROOVE-GOSSAMER-INTEGRATION-2026-04-17.adoc, ~/Desktop/SITREP-2026-04-17-burble-baseline.adoc
+
+== Goal
+
+Produce a Burble situation report with corrective/adaptive/perfective and
+must/should/could/aspirational lists, add guardrails for known failures, run
+baseline verification, and preserve governance context for continuation.
+
+== Current task
+
+Close this work unit with a standards-aligned session-close artefact after
+updating governance docs and baseline evidence.
+
+== Last completed action
+
+Populated governance units (maintenance/planning/audit), added a baseline
+sitrep, added quicer prerequisite guard, and copied updated key docs to Desktop.
+
+== Next intended action
+
+Resolve missing Perl `FindBin.pm` in the build environment, then re-run
+`just test-server` and continue corrective/security triage.
+
+== Repository
+
+* `/var/mnt/eclipse/repos/developer-ecosystem/burble`
+
+== Branch
+
+`main`
+
+== HEAD commit
+
+[cols="1,1,3",options="header"]
+|===
+| Repo | HEAD | Subject
+| `burble` | `4d6fd29` | feat: add distributed topology transitions and governance scaffolding
+|===
+
+== Files of interest
+
+* `scripts/ensure-msquic-version.sh` (existing guard, retained)
+* `scripts/ensure-quicer-prereqs.sh` (new guard)
+* `tests/aspect/aspect_tests.sh` (corrective fix)
+* `Justfile` (guard wiring + test flow update)
+* `docs/governance/SITREP-2026-04-17-burble-baseline.adoc` (new consolidated sitrep)
+* `docs/governance/session-close/SESSION-CLOSE-2026-04-17-burble-baseline-guards.adoc` (this file)
+* `docs/architecture/BURBLE-GAMEPLAY-GROOVE-GOSSAMER-INTEGRATION-2026-04-17.adoc` (baseline links)
+* `~/Desktop/BURBLE-GAMEPLAY-GROOVE-GOSSAMER-INTEGRATION-2026-04-17.adoc`
+* `~/Desktop/SITREP-2026-04-17-burble-baseline.adoc`
+
+== Known blockers
+
+* Missing Perl core module `FindBin.pm` blocks quicer/msquic source build path.
+* `just test-server` is blocked pending environment remediation.
+* `panic-attack assail` reports 57 weak points requiring triage and fixes.
+
+== Residual risks
+
+* Working tree is dirty with pre-existing changes; integration must avoid accidental reverts.
+* CRG/TRG status is still provisional due incomplete full-battery evidence.
+* IndieWeb roadmap exists as ADR, but implementation has not started.
+
+== Recommended next protocol
+
+`verify maintenance-sweep /var/mnt/eclipse/repos/developer-ecosystem/burble`
+
+== Commits made this session
+
+[cols="1,1,1,3",options="header"]
+|===
+| Order | Repo | Hash | Subject
+| 1 | `burble` | `—` | No commit made in this session (working tree updates only)
+|===
+
+== Verifications run this session
+
+[cols="1,3,2",options="header"]
+|===
+| Item | What was verified | Result
+| `just doctor` | Required toolchain preflight | ✅
+| `just guard-msquic` | Embedded msquic tag guard (`v2.3.8`) | ✅
+| `just guard-quicer-prereqs` | quicer source-build prereq availability | ❌ (`FindBin.pm` missing)
+| `just test-server` | Server tests on this environment | ❌ blocked by prereq guard
+| `just test-ffi` | Zig FFI tests | ✅
+| `just aspect` | Aspect-oriented checks | ✅
+| `just assail` | Security/compliance scanner run | ⚠ findings (57)
+|===
+
+== Decisions made & Deferred
+
+* **Decision**: Keep msquic guard and add explicit quicer prerequisite guard.
+* **Decision**: Harden aspect script to avoid false failure under `pipefail`.
+* **Deferred**: Environment-level Perl remediation path (package/install policy choice).
+* **Deferred**: IndieWeb phase execution sequencing beyond ADR 0002.
+* **Deferred**: Formal TRG audit pack creation for ABI/FFI toolchain-like surfaces.
+
+== Open invitations to the user
+
+* Do you want environment remediation handled in-repo docs only, or should we also install the missing Perl module on this machine?
+* Should IndieWeb phase-1 implementation start immediately after the server baseline is green?
+
+== Memory entries written or updated
+
+* None in this session.
+
+== Risk register delta
+
+[cols="3,1,3",options="header"]
+|===
+| Risk | Direction | Notes
+| Late-stage server compile failures | DECREASED | Now fails fast via prereq guard.
+| Security exposure from known findings | UNCHANGED | `assail` findings still open.
+| Context loss across sessions | DECREASED | Sitrep + session-close artefacts saved in repo and Desktop.
+|===
+
+== Discipline check (Meta-rule audit)
+
+[cols="2,1,3",options="header"]
+|===
+| Standing rule | Honoured? | Evidence
+| Full battery before claims | ⚠ Partial | Server test path still blocked; only partial battery complete.
+| Dependability-first ordering | ✅ | Guard/failure unblocking prioritized before feature expansion.
+| No workaround-when-root-fix-needed (EPHAPAX context) | ✅ | Captured as explicit adaptive backlog item.
+|===

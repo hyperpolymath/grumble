@@ -1,1 +1,10 @@
 = Could Unit
+
+Could checklist:
+
+* [x] Add dedicated quicer prereq guard command.
+* [ ] Add aggregate `guard-toolchain` recipe.
+* [ ] Add coprocessor and voice-channel benchmark scorecards.
+* [ ] Add per-release interop matrix for Groove/IndieWeb pathways.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

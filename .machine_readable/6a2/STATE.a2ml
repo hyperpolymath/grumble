@@ -79,9 +79,12 @@ open-failures = 0
 #             Collapsed BURBLE-PROOF-STATUS.md. Demoted completion % to honest 72.
 
 [crg]
-grade = "C"
-achieved = "2026-04-04"
-notes = "All CRG C requirements met: unit, smoke, P2P (StreamData), E2E, contract, aspect, benchmarks"
+grade = "D"
+achieved = "2026-04-18"
+previous-grade = "C"
+demoted-on = "2026-04-18"
+demotion-reference = "docs/governance/CRG-AUDIT-2026-04-18.adoc"
+notes = "Demoted C->D per CRG v2.0 STRICT audit. [dogfooding-status] populated 2026-04-19 citing vext.ex/vext_groove.ex/vext_test.exs. Remaining C-blockers: no READINESS file, weak per-directory README coverage in core subtrees, and no CI test-pass evidence."
 
 [ecosystem]
 part-of = ["Burble Platform"]

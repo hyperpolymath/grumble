@@ -1,1 +1,11 @@
 = Must Unit
+
+Must checklist:
+
+* [x] IndieWeb remains optional, never required for base Burble usage.
+* [x] ABI policy remains Idris2-first and FFI policy remains pure-Zig-first.
+* [x] msquic compatibility guard enforced in test path.
+* [ ] quicer source build prerequisite (`FindBin.pm`) resolved.
+* [ ] `just test-server` passing baseline restored.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

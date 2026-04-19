@@ -1,1 +1,18 @@
 = Governance Pillar (TSDM)
+
+This directory tracks governance state for Burble across:
+
+* planning (`must`, `should`, `could`, `aspirational`)
+* maintenance (`corrective`, `adaptive`, `perfective`)
+* audit (`systems`, `compliance`, `effects`)
+
+Latest integrated sitrep and baseline:
+
+* link:SITREP-2026-04-17-burble-baseline.adoc[SITREP-2026-04-17-burble-baseline.adoc]
+
+Supporting criteria:
+
+* link:CRG-CRITERIA.adoc[CRG-CRITERIA.adoc]
+* link:CRG-AUDIT-2026-04-18.adoc[CRG-AUDIT-2026-04-18.adoc]
+* link:CRG-LIFT-PLAN-2026-04-18.adoc[CRG-LIFT-PLAN-2026-04-18.adoc]
+* link:SOFTWARE-DEVELOPMENT-APPROACH.adoc[SOFTWARE-DEVELOPMENT-APPROACH.adoc]

@@ -1,1 +1,12 @@
 = Compliance Unit
+
+Compliance checklist:
+
+* [x] ABI/FFI seam policy recorded in governance and sitrep.
+* [x] IndieWeb optionality constraint captured in ADR and planning.
+* [x] `panic-attack assail` run in this baseline cycle.
+* [ ] Assail findings reduced to release-ready threshold.
+* [ ] CRG component grades promoted with stronger evidence.
+* [ ] TRG audit pack created for ABI/FFI toolchain-like surfaces (where relevant).
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

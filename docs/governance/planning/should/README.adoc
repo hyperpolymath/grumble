@@ -1,1 +1,10 @@
 = Should Unit
+
+Should checklist:
+
+* [x] Cross-repo integration context documented (Burble + Gossamer + Groove + Airborne Submarine Squadron).
+* [ ] Groove schema/proof conformance test path added.
+* [ ] Monarchic/oligarchic deployment recipes captured as runnable docs.
+* [ ] Accessibility evidence baseline captured in verification reports.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

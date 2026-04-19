@@ -1,1 +1,10 @@
 = Perfective Unit
+
+Active perfective checklist:
+
+* [x] Add guard commands to improve diagnostics and operator feedback.
+* [ ] Add aggregate guard recipe to run all preflight guards together.
+* [ ] Wire governance checks into CI (doctor, guards, aspect, tests, assail).
+* [ ] Publish per-topology reliability/interoperability evidence dashboards.
+
+Reference: link:../../SITREP-2026-04-17-burble-baseline.adoc[2026-04-17 sitrep].

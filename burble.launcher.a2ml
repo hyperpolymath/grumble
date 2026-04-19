@@ -12,7 +12,7 @@ version      = "0.1.0"
 license      = "PMPL-1.0-or-later"
 
 [repo]
-path = "/var/mnt/eclipse/repos/burble"
+path = "/var/mnt/eclipse/repos/developer-ecosystem/burble"
 
 [runtime]
 kind    = "server-url"

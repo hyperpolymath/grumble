@@ -1,0 +1,413 @@
+= Architecture Decision Record: 0002-indieweb-native-optional-integration
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 2. Add Optional IndieWeb-Native Integration for Identity and Publishing
+
+Date: 2026-04-17
+
+## Status
+
+Proposed
+
+## Context
+
+Burble currently provides first-party auth (`register`, `login`, `guest`,
+`magic-link`) and real-time room participation APIs, but no native IndieWeb
+support.
+
+A core product goal is to support the IndieWeb community in a way that is
+native and tight for people who want it, while remaining completely optional
+for everyone else.
+
+Current gaps:
+
+- No IndieAuth sign-in or account-linking flow
+- No profile discovery from `me` URLs (`rel=me`, h-card)
+- No Micropub publishing path for room/session events
+- No Webmention send/receive support for Burble-generated pages
+- No public room/session HTML pages with microformats (`h-event`, `h-entry`)
+
+## Decision
+
+Burble will add an optional IndieWeb integration layer as a first-class server
+context (`Burble.IndieWeb`) with four capabilities:
+
+1. IndieAuth-based identity linking and optional sign-in
+2. Profile discovery from user `me` URLs
+3. Micropub publishing for room/session lifecycle events
+4. Webmention sender/receiver support for public Burble pages
+
+### Product Constraints (Non-negotiable)
+
+- IndieWeb support is never required to use Burble.
+- Guests and email/password users continue to work unchanged.
+- IndieWeb publishing is opt-in at user level and off by default.
+- Publishing recording/transcript links requires explicit consent gates.
+
+## API and Endpoint Contracts
+
+### Public Auth Endpoints
+
+[cols="1,2,1,4"]
+|===
+| Method | Path | Auth | Contract
+
+| `POST`
+| `/api/v1/auth/indieweb/start`
+| Public
+| Starts IndieAuth login flow. Discovers endpoints from `me` URL, creates
+signed state/PKCE verifier, returns authorization URL.
+
+| `GET`
+| `/api/v1/auth/indieweb/callback`
+| Public
+| Completes login flow (`code` + `state`). Exchanges code at token endpoint,
+verifies `me`, maps to linked Burble account, returns Burble JWT pair.
+|===
+
+Request (`POST /api/v1/auth/indieweb/start`):
+
+[source,json]
+----
+{
+  "me": "https://alice.example",
+  "redirect_to": "/settings/identity"
+}
+----
+
+Success response:
+
+[source,json]
+----
+{
+  "authorization_url": "https://indieauth.example/auth?...",
+  "state": "f7cf6e...",
+  "expires_in": 600
+}
+----
+
+Callback success response (`GET /api/v1/auth/indieweb/callback?...`):
+
+[source,json]
+----
+{
+  "user_id": "octad_123",
+  "display_name": "Alice",
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "indieweb": {
+    "me": "https://alice.example",
+    "verified": true
+  }
+}
+----
+
+Callback error contract:
+
+[source,json]
+----
+{ "error": "indieweb_not_linked" }
+----
+
+Other canonical error codes: `invalid_state`, `discovery_failed`,
+`token_exchange_failed`, `me_mismatch`.
+
+### Authenticated IndieWeb Settings Endpoints
+
+[cols="1,2,1,4"]
+|===
+| Method | Path | Auth | Contract
+
+| `POST`
+| `/api/v1/indieweb/link/start`
+| Required
+| Starts account-link flow for current Burble user; returns authorization URL.
+
+| `GET`
+| `/api/v1/indieweb/settings`
+| Required
+| Returns effective IndieWeb settings and discovered endpoints.
+
+| `PUT`
+| `/api/v1/indieweb/settings`
+| Required
+| Updates publish preferences (without re-running identity flow).
+
+| `DELETE`
+| `/api/v1/indieweb/link`
+| Required
+| Unlinks IndieWeb identity and removes stored token material.
+|===
+
+Request (`PUT /api/v1/indieweb/settings`):
+
+[source,json]
+----
+{
+  "enabled": true,
+  "auto_publish": {
+    "session_start": true,
+    "session_end": true,
+    "transcript": false
+  },
+  "default_visibility": "unlisted",
+  "send_webmentions": true
+}
+----
+
+### Publishing and Webmention Endpoints
+
+[cols="1,2,1,4"]
+|===
+| Method | Path | Auth | Contract
+
+| `POST`
+| `/api/v1/indieweb/publish/session-start`
+| Required
+| Creates a Micropub `h-entry` (or `h-event` update) for session start.
+
+| `POST`
+| `/api/v1/indieweb/publish/session-end`
+| Required
+| Publishes session end summary and optional recap URL.
+
+| `POST`
+| `/api/v1/indieweb/webmentions/send`
+| Required
+| Queues outbound webmentions for all discovered external targets.
+
+| `POST`
+| `/webmention`
+| Public
+| Receives inbound webmentions for Burble public pages.
+
+| `GET`
+| `/.well-known/webmention`
+| Public
+| Returns endpoint metadata for webmention discovery.
+|===
+
+Webmention receive success response:
+
+[source,json]
+----
+{ "status": "accepted", "id": "wm_6f8f..." }
+----
+
+### Public HTML Endpoints (Microformats)
+
+[cols="1,2,1,4"]
+|===
+| Method | Path | Auth | Contract
+
+| `GET`
+| `/rooms/:room_id`
+| Public/Room Policy
+| Public room landing page with `h-event` markup when room is marked
+publishable.
+
+| `GET`
+| `/rooms/:room_id/sessions/:session_id`
+| Public/Room Policy
+| Session recap page with `h-entry` markup and canonical URL for mentions.
+|===
+
+## Data Model (VeriSimDB Octad Mapping)
+
+Burble.Store gains IndieWeb-specific entities:
+
+[cols="1,3"]
+|===
+| Octad Name Prefix | Purpose
+
+| `indieweb_profile:<user_id>`
+| Linked identity, discovered endpoints, publish preferences.
+
+| `indieweb_state:<state>`
+| Short-lived auth flow state + PKCE verifier + flow intent.
+
+| `indieweb_outbox:<uuid>`
+| Queued Micropub/Webmention jobs with retries and status.
+
+| `indieweb_webmention:<hash>`
+| Inbound mention record + verification status + moderation state.
+|===
+
+`indieweb_profile` document fields:
+
+- `me_url`
+- `authorization_endpoint`
+- `token_endpoint`
+- `micropub_endpoint`
+- `webmention_endpoint`
+- `scopes` (list)
+- `access_token_enc`
+- `refresh_token_enc` (optional)
+- `enabled`
+- `auto_publish` map
+- `default_visibility`
+- `send_webmentions`
+- `updated_at`
+
+### Token Handling
+
+Access/refresh tokens are encrypted before persistence.
+
+Planned module: `Burble.IndieWeb.TokenVault`
+
+- Encrypt with `Plug.Crypto.MessageEncryptor`
+- Key material derived from `secret_key_base`
+- No plaintext token logging
+- Redacted in diagnostics/export paths
+
+## Phoenix Module and File Layout
+
+### New Core Context Modules
+
+- `server/lib/burble/indieweb.ex`
+- `server/lib/burble/indieweb/auth.ex`
+- `server/lib/burble/indieweb/discovery.ex`
+- `server/lib/burble/indieweb/micropub.ex`
+- `server/lib/burble/indieweb/webmention.ex`
+- `server/lib/burble/indieweb/publisher.ex`
+- `server/lib/burble/indieweb/token_vault.ex`
+- `server/lib/burble/indieweb/outbox_worker.ex`
+
+### New Web Layer Modules
+
+- `server/lib/burble_web/controllers/api/indie_auth_controller.ex`
+- `server/lib/burble_web/controllers/api/indieweb_settings_controller.ex`
+- `server/lib/burble_web/controllers/api/indieweb_publish_controller.ex`
+- `server/lib/burble_web/controllers/webmention_controller.ex`
+- `server/lib/burble_web/controllers/room_page_controller.ex`
+
+### Store API Additions
+
+- `Burble.Store.put_indieweb_profile/2`
+- `Burble.Store.get_indieweb_profile/1`
+- `Burble.Store.delete_indieweb_profile/1`
+- `Burble.Store.put_indieweb_state/2`
+- `Burble.Store.consume_indieweb_state/1`
+- `Burble.Store.enqueue_indieweb_job/1`
+- `Burble.Store.claim_indieweb_jobs/1`
+- `Burble.Store.update_indieweb_job/2`
+- `Burble.Store.save_inbound_webmention/1`
+
+### Router Shape (Planned)
+
+Public API scope:
+
+[source,elixir]
+----
+scope "/api/v1", BurbleWeb.API do
+  pipe_through :api
+  post "/auth/indieweb/start", IndieAuthController, :start
+  get "/auth/indieweb/callback", IndieAuthController, :callback
+end
+----
+
+Authenticated API scope:
+
+[source,elixir]
+----
+scope "/api/v1", BurbleWeb.API do
+  pipe_through :authenticated_api
+  post "/indieweb/link/start", IndieAuthController, :start_link
+  get "/indieweb/settings", IndieWebSettingsController, :show
+  put "/indieweb/settings", IndieWebSettingsController, :update
+  delete "/indieweb/link", IndieWebSettingsController, :unlink
+  post "/indieweb/publish/session-start", IndieWebPublishController, :session_start
+  post "/indieweb/publish/session-end", IndieWebPublishController, :session_end
+  post "/indieweb/webmentions/send", IndieWebPublishController, :send_mentions
+end
+----
+
+Browser scope:
+
+[source,elixir]
+----
+scope "/", BurbleWeb do
+  pipe_through :browser
+  get "/.well-known/webmention", WebmentionController, :well_known
+  post "/webmention", WebmentionController, :receive
+  get "/rooms/:room_id", RoomPageController, :show
+  get "/rooms/:room_id/sessions/:session_id", RoomPageController, :session
+end
+----
+
+## Security and Abuse Controls
+
+- IndieAuth callbacks require valid state and one-time state consumption.
+- Only `https://` `me` URLs in production (localhost exception in dev/test).
+- Endpoint discovery and mention verification must enforce SSRF controls:
+  - blocked private CIDRs
+  - blocked link-local ranges
+  - bounded redirect count
+  - strict timeout and response size limits
+- Webmention receive endpoint runs through existing rate limiter tiers.
+- Inbound mentions default to `pending` moderation when room visibility is
+  restricted.
+
+## Consent and Privacy Rules
+
+- `auto_publish` defaults to all false.
+- Session start/end posting requires room-level `indieweb_publishable` flag.
+- Transcript/recording URLs require explicit `publishing_consent=true` and
+  room policy allowing publication.
+- Avow consent attestations are recorded before publication side effects.
+
+## Rollout Plan
+
+### Phase 1 (MVP)
+
+- IndieAuth link flow for existing users
+- IndieAuth login for already-linked identities
+- `h-event` public room page
+- Manual Micropub publish for session start
+
+### Phase 2
+
+- Auto-publish toggles for session start/end
+- Outbox worker + retries
+- Outbound webmention sender
+
+### Phase 3
+
+- Inbound webmention endpoint + moderation surface
+- `h-entry` recap pages for ended sessions
+- richer h-card import for display metadata
+
+## Test Plan
+
+- Unit tests for state lifecycle, PKCE handling, token encryption/decryption
+- Controller tests for each endpoint contract and error code
+- Integration tests with local Plug test servers for:
+  - discovery endpoint resolution
+  - token exchange
+  - micropub posting
+  - webmention verification
+- Property tests for URL normalisation and SSRF guard logic
+
+## Consequences
+
+### Positive
+
+- Strong IndieWeb compatibility without imposing new requirements on users
+- Supports user-owned identity and publishing workflows
+- Preserves Burble's low-friction guest/email onboarding
+- Extends Burble's public pages into linkable/mentionable web artifacts
+
+### Negative
+
+- More moving parts (discovery, token lifecycle, queueing, moderation)
+- Additional operational and abuse surface (SSRF, spam, callback handling)
+- More support burden for third-party endpoint quirks
+
+### Neutral
+
+- Existing auth and room APIs remain valid and unchanged
+- Topology model remains unchanged; feature is additive
+- VeriSimDB remains the persistence substrate

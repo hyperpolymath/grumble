@@ -1,1 +1,14 @@
 = Planning Axis
+
+Priority order: `must > should > could > aspirational`
+
+Current planning baseline:
+
+* link:../SITREP-2026-04-17-burble-baseline.adoc[SITREP-2026-04-17-burble-baseline.adoc]
+
+Checklist:
+
+* [x] Must unit populated.
+* [x] Should unit populated.
+* [x] Could unit populated.
+* [x] Aspirational unit added and populated.

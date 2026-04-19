@@ -1,0 +1,212 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= Burble Gameplay Integration Notes (Groove/Gossamer/Nexus-Plexus)
+:toc: preamble
+:icons: font
+
+Date: 2026-04-17
+Owner context: hyperpolymath
+
+== Why This Note Exists
+
+This document captures critical integration context that must not be lost:
+
+* Burble is integral to the Game Server Admin work.
+* Burble nexus/plexus deployment patterns are operational, not theoretical.
+* Airborne Submarine Squadron is the first active in-game Burble-adjacent usage track (not only provisioning/config).
+* Groove protocol + Gossamer architecture must be treated as first-class dependencies for Burble planning.
+* EPHAPAX type-system change must be accounted for at root (not via local workarounds):
+  ** choreographic types for linear EPHAPAX
+  ** dyadic types for affine EPHAPAX
+
+== Topology Semantics (Authoritative Working Map)
+
+Burble runtime currently implements four modes in code:
+
+* `:monarchic`
+* `:oligarchic`
+* `:distributed`
+* `:serverless`
+
+User governance framing adds an explicit `anarchic` concept. For operational alignment:
+
+* Monarchic -> single nexus / single trust domain.
+* Oligarchic -> federated trusted nexuses.
+* Anarchic -> open plexus behavior; maps primarily to `distributed`, with `serverless` as pure peer mesh extreme.
+* Serverless -> no central nexus, E2EE-mandatory mesh.
+
+Code references:
+
+* `server/lib/burble/topology.ex`
+* `server/lib/burble/topology/transition.ex`
+
+== Burble <-> Groove Current State
+
+Burble exports Groove endpoints via `/.well-known/groove/*` and maintains a manifest-driven capability model.
+
+Primary implementation points:
+
+* `server/lib/burble/groove.ex`
+* `server/lib/burble_web/plugs/groove_plug.ex`
+* `server/lib/burble/groove/health_mesh.ex`
+* `server/lib/burble/groove/feedback.ex`
+
+Manifest/capability intent includes voice/text/presence/spatial-audio/tts/stt, and declares composability with integrity/storage/scanning services.
+
+== Gossamer Dependencies and Relevance
+
+Burble already depends on Gossamer integration paths in multiple places:
+
+* desktop launcher/runtime integration and gossamer shell usage
+* admin runtime bridge and capability tokens
+* configuration contracts referencing Groove manifest and gossamer config
+
+Representative references:
+
+* `admin/gossamer.conf.json`
+* `admin/src/RuntimeBridge.res`
+* `client/desktop/build.zig`
+* `k9iser.toml`
+
+The canonical Groove protocol/type proofs live in the Gossamer repo:
+
+* `/var/mnt/eclipse/repos/games-ecosystem/gossamer/src/interface/abi/Groove.idr`
+* `/var/mnt/eclipse/repos/games-ecosystem/gossamer/src/core/Groove.eph`
+* `/var/mnt/eclipse/repos/games-ecosystem/gossamer/src/interface/ffi/src/groove.zig`
+* `/var/mnt/eclipse/repos/games-ecosystem/gossamer/schema/groove-manifest.schema.json`
+
+== Airborne Submarine Squadron Linkage
+
+The Airborne Submarine Squadron repo exists locally and is actively using Gossamer-path gameplay artifacts:
+
+* `/var/mnt/eclipse/repos/games-ecosystem/airborne-submarine-squadron`
+* `gossamer/index_gossamer.html`
+* `gossamer/app_gossamer.js`
+* `gossamer/net/signalling.js`
+* `.well-known/groove/manifest.json`
+
+Roadmap/docs in that repo explicitly mention planned Burble/Groove integration expansion once core gameplay loop stabilizes.
+
+== Deployment Interpretation: Nexus/Plexus
+
+Operationally useful interpretation for active deployment planning:
+
+* Nexus = a controllable service hub (single or clustered trust anchor) for identity, policy, audit, and room governance.
+* Plexus = dynamic interconnection mesh between services/rooms/nodes with explicit capability negotiation and bounded trust.
+
+Using Burble modes:
+
+* Monarchic nexus: local authority, simplest for rollout/testing.
+* Oligarchic nexus mesh: trusted federation for game+admin+ops domains.
+* Distributed/anarchic plexus: independent authorities with integrity proofs.
+* Serverless plexus: peer-first resilience and privacy, minimal server control.
+
+== Priority Constraints for Burble Roadmapping
+
+Priority order (author-provided):
+
+1. Dependability
+2. Interoperability
+3. Accessibility
+4. Security
+5. Usability
+6. Versatility
+7. Functionality
+8. Maintainability
+
+Non-negotiable implementation seam policy:
+
+* ABI definitions in Idris2.
+* FFI implementations in pure Zig.
+* Thin, separate C adapter only where legacy interop is essential.
+
+== EPHAPAX Change Impact (Must Track)
+
+Incoming upstream language shifts:
+
+* Linear EPHAPAX: choreographic types.
+* Affine EPHAPAX: dyadic types.
+
+Burble policy implication:
+
+* If gameplay/voice pipeline or orchestration paths need EPHAPAX features, fix required semantics at root (EPHAPAX/compiler/toolchain/spec), not by local Burble-only workaround hacks.
+
+== Immediate Integration Actions (High Value)
+
+1. Add explicit Burble architecture section binding nexus/plexus semantics to the four runtime topology modes.
+2. Add a cross-repo integration checklist (Burble <-> Gossamer <-> Airborne Submarine Squadron).
+3. Add Groove contract conformance tests that consume Gossamer groove-manifest schema/proofs.
+4. Add deployment recipes for monarchic and oligarchic game-admin + Burble stacks.
+5. Add a tracked adaptive item for EPHAPAX type-system transition readiness.
+
+== Source Pointers (Quick Open)
+
+Burble:
+
+* `server/lib/burble/topology.ex`
+* `server/lib/burble/topology/transition.ex`
+* `server/lib/burble/groove.ex`
+* `server/lib/burble_web/plugs/groove_plug.ex`
+* `TOPOLOGY.md`
+
+Gossamer:
+
+* `/var/mnt/eclipse/repos/games-ecosystem/gossamer/src/interface/abi/Groove.idr`
+* `/var/mnt/eclipse/repos/games-ecosystem/gossamer/src/core/Groove.eph`
+* `/var/mnt/eclipse/repos/games-ecosystem/gossamer/src/interface/ffi/src/groove.zig`
+
+Airborne Submarine Squadron:
+
+* `/var/mnt/eclipse/repos/games-ecosystem/airborne-submarine-squadron/README.adoc`
+* `/var/mnt/eclipse/repos/games-ecosystem/airborne-submarine-squadron/ROADMAP.adoc`
+* `/var/mnt/eclipse/repos/games-ecosystem/airborne-submarine-squadron/gossamer/index_gossamer.html`
+* `/var/mnt/eclipse/repos/games-ecosystem/airborne-submarine-squadron/.well-known/groove/manifest.json`
+
+== Governance And Baseline Links (2026-04-17)
+
+* `docs/governance/SITREP-2026-04-17-burble-baseline.adoc`
+* `docs/governance/maintenance/`
+* `docs/governance/planning/`
+* `docs/governance/audit/`
+
+== ASS Repo Reality Check (Useful For Claude)
+
+This section reflects what is *actually implemented* in
+`games-ecosystem/airborne-submarine-squadron` as of 2026-04-17.
+
+=== Authoritative Boundary In ASS
+
+* Canonical gameplay state remains local to the game loop + Gossamer event bus.
+* Burble/Groove are non-authoritative mirror/coordination surfaces in this repo.
+* Do not move source-of-truth simulation state into Burble pathways.
+
+Reference docs in ASS:
+
+* `docs/BURBLE-GROOVE-INTEGRATION.adoc`
+* `docs/EVENT-TAXONOMY.md`
+* `docs/MAINTENANCE-ACTIONS-2026-04-17.adoc`
+
+=== Current Multiplayer/Transport Reality
+
+* ASS currently uses local Deno signalling endpoint `/room/:code` (`run.js`).
+* Browser WebRTC handshake broker is `gossamer/net/signalling.js`.
+* `signalling.js` is transport-only and must not own gameplay state.
+
+=== Groove Manifest Reality In ASS
+
+* Manifest path: `.well-known/groove/manifest.json`.
+* Current contract is `mode: passive` with CLI capability surface.
+* Treat this as explicit current-state, not full Burble capability parity.
+
+=== Contract/Test Locks Added In ASS
+
+* Compatibility lock: manifest shape and mode invariants.
+* Regression lock: signalling remains world-agnostic (transport only).
+* Existing ABI locks remain in place for `init_state`/`step_state` boundary.
+
+=== Practical Guidance For Claude In ASS Context
+
+* Prefer incremental integration: mirror selected events with event ID + UTC timestamp + local tick.
+* Keep deterministic local event ordering as source of truth.
+* If EPHAPAX semantics need changes, track and fix upstream at root repos (no ASS-only workarounds).
+* When copying text into ASS docs, normalize licensing/header conventions to AGPL-3.0-or-later for this repo.
+* Be careful with stale references: canonical Affine source is `src/main.affine` (not legacy `.as` naming).

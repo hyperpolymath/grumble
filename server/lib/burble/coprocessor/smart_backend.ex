@@ -66,13 +66,24 @@ defmodule Burble.Coprocessor.SmartBackend do
 
   @impl true
   def audio_encode(pcm, sample_rate, channels, bitrate) do
+    # PCM frame pack (NOT Opus transcoding — see Backend behaviour docs).
     zig_or_elixir().audio_encode(pcm, sample_rate, channels, bitrate)
   end
 
   @impl true
-  def audio_decode(opus_frame, sample_rate, channels) do
-    zig_or_elixir().audio_decode(opus_frame, sample_rate, channels)
+  def audio_decode(pcm_frame, sample_rate, channels) do
+    # PCM frame unpack (NOT Opus decoding).
+    zig_or_elixir().audio_decode(pcm_frame, sample_rate, channels)
   end
+
+  @impl true
+  def opus_transcode(pcm_or_opus, sample_rate, channels, bitrate) do
+    # Always returns {:error, :not_implemented} — neither backend links libopus.
+    zig_or_elixir().opus_transcode(pcm_or_opus, sample_rate, channels, bitrate)
+  end
+
+  @impl true
+  def opus_available?, do: false
 
   @impl true
   def audio_noise_gate(pcm, threshold_db) do

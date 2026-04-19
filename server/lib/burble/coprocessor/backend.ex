@@ -16,11 +16,21 @@
 #     └── SmartBackend     — dispatcher routing per-operation
 #
 # Kernel domains:
-#   Audio   — Opus encode/decode, noise suppression, echo cancellation
+#   Audio   — PCM frame pack/unpack (NOT Opus transcoding — see note below),
+#             noise suppression, echo cancellation
 #   Crypto  — AES-GCM frame encryption, Avow hash chains
 #   IO      — jitter buffer, packet loss concealment, adaptive bitrate
 #   DSP     — FFT, convolution, mixing matrix
 #   Neural  — ML-based noise suppression (keyboard/fan/dog removal)
+#
+# Opus transcoding is NOT performed server-side. Burble is an E2EE-opaque
+# SFU: clients encode Opus in the browser's WebRTC stack; the server forwards
+# ciphertext frames without decoding. The audio_encode/audio_decode callbacks
+# below pack raw PCM into length-prefixed frames — they are used for
+# recording/archive/benchmark paths only, not for transcoding live RTP. An
+# explicit `opus_transcode/4` callback returns {:error, :not_implemented} to
+# make this contract enforceable. Real Opus would require linking libopus;
+# see STATE.a2ml [migration] for the deferred decision.
 
 defmodule Burble.Coprocessor.Backend do
   @moduledoc """
@@ -59,19 +69,30 @@ defmodule Burble.Coprocessor.Backend do
   @callback available?() :: boolean()
 
   # ---------------------------------------------------------------------------
-  # Audio kernel — Opus codec, noise gate, echo cancellation
+  # Audio kernel — PCM frame pack/unpack, noise gate, echo cancellation
   # ---------------------------------------------------------------------------
 
   @doc """
-  Encode a raw PCM audio frame to Opus.
+  Pack raw PCM samples into a length-prefixed binary frame.
+
+  **This is NOT Opus encoding.** Clients perform Opus encoding in the
+  browser's WebRTC stack; the server does not transcode live RTP. This
+  callback is used for recording, archive, and self-test loopback paths
+  where raw PCM framing is needed.
+
+  The `bitrate` parameter is accepted for API stability but is currently
+  ignored — no compression is performed. Call `opus_transcode/4` explicitly
+  if you need real Opus (it will return `{:error, :not_implemented}` until
+  libopus is linked).
 
   ## Parameters
     * `pcm` — Raw PCM samples as a list of floats (normalised -1.0..1.0)
-    * `sample_rate` — Sample rate in Hz (typically 48000)
+    * `sample_rate` — Sample rate in Hz (typically 48000); informational
     * `channels` — Channel count (1 = mono, 2 = stereo)
-    * `bitrate` — Target bitrate in bits/sec (e.g. 32000)
+    * `bitrate` — Currently ignored; retained for API compatibility
 
-  Returns `{:ok, opus_binary}` or `{:error, reason}`.
+  Returns `{:ok, frame_binary}` or `{:error, reason}`. The binary is
+  round-trippable through `audio_decode/3`.
   """
   @callback audio_encode(
               pcm :: [float()],
@@ -81,15 +102,43 @@ defmodule Burble.Coprocessor.Backend do
             ) :: {:ok, binary()} | {:error, term()}
 
   @doc """
-  Decode an Opus frame to raw PCM samples.
+  Unpack a length-prefixed PCM frame (produced by `audio_encode/4`)
+  back into normalised float samples.
 
-  Returns `{:ok, pcm_floats}` or `{:error, reason}`.
+  **This is NOT Opus decoding.** See `audio_encode/4` docs for the
+  SFU-opaque rationale.
+
+  Returns `{:ok, pcm_floats}` or `{:error, :invalid_frame}`.
   """
   @callback audio_decode(
-              opus_frame :: binary(),
+              pcm_frame :: binary(),
               sample_rate :: pos_integer(),
               channels :: 1 | 2
             ) :: {:ok, [float()]} | {:error, term()}
+
+  @doc """
+  Transcode raw PCM to a real Opus frame (or real Opus to PCM if `pcm` is a
+  binary starting with the Opus TOC).
+
+  **Currently returns `{:error, :not_implemented}` on all backends.**
+  This callback exists so that callers intending real Opus transcoding fail
+  loudly rather than silently round-tripping raw PCM through
+  `audio_encode/4`. Implementing this requires linking libopus; the decision
+  is tracked in STATE.a2ml [migration].
+  """
+  @callback opus_transcode(
+              pcm_or_opus :: [float()] | binary(),
+              sample_rate :: pos_integer(),
+              channels :: 1 | 2,
+              bitrate :: pos_integer()
+            ) :: {:error, :not_implemented}
+
+  @doc """
+  Whether this backend can perform real Opus transcoding.
+
+  Returns `false` on every backend until libopus is linked.
+  """
+  @callback opus_available?() :: boolean()
 
   @doc """
   Apply noise gate to PCM samples.

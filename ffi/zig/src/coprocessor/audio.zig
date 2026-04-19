@@ -3,7 +3,15 @@
 // Burble Coprocessor — Audio kernel (Zig SIMD implementation).
 //
 // SIMD-accelerated audio processing operations:
-//   - PCM encode/decode (16-bit LE ↔ float, with SIMD clamping)
+//   - PCM frame pack/unpack (16-bit LE ↔ float, with SIMD clamping)
+//     NOTE: This is *framing*, not Opus compression. Real Opus transcoding
+//     requires linking libopus and is deferred — see STATE.a2ml [migration].
+//     Burble is an E2EE-opaque SFU: clients Opus-encode in the browser's
+//     WebRTC stack; the server forwards ciphertext without decoding. These
+//     pack/unpack helpers are used only for recording, archive, and
+//     self-test loopback paths. The Elixir Backend exposes an explicit
+//     `opus_transcode/4` callback that returns {:error, :not_implemented}
+//     so callers intending real Opus fail loudly.
 //   - Noise gate (vectorised threshold comparison)
 //   - Echo cancellation (NLMS adaptive filter, SIMD dot product)
 //

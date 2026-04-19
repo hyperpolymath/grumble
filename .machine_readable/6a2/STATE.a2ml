@@ -40,8 +40,10 @@ signaling-relay = { status = "consolidated", canonical = "signaling/relay.js", r
 doc-reality-drift = [
   "ROADMAP.adoc claims LLM Service DONE — is a stub (provider missing, parse_frame broken)",
   "ROADMAP.adoc claims Formal Proofs DONE — Avow attestation is data-type-only, no dependent-type enforcement",
-  "README.adoc PTP claim sub-microsecond assumes hardware — code falls back to system clock without NIF",
-  "ffi/zig coprocessor nif_audio_encode/decode are not real Opus (intentional SFU-opaque, but misleadingly named)"
+  "README.adoc PTP claim sub-microsecond assumes hardware — code falls back to system clock without NIF"
+]
+resolved-2026-04-16 = [
+  "Opus naming/contract drift: Backend.audio_encode/4 + audio_decode/3 docstrings rewritten to state explicitly that they are PCM frame pack/unpack, NOT Opus. Added explicit Backend.opus_transcode/4 callback returning {:error, :not_implemented} on every backend (ElixirBackend, ZigBackend, SmartBackend, SNIFBackend). Added opus_available?/0 callback (always false). Pinned by opus_contract_test.exs."
 ]
 
 [critical-next-actions]

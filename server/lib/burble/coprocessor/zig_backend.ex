@@ -104,6 +104,17 @@ defmodule Burble.Coprocessor.ZigBackend do
     end
   end
 
+  @impl true
+  def opus_transcode(_pcm_or_opus, _sample_rate, _channels, _bitrate) do
+    # Real Opus transcoding is not implemented in the Zig coprocessor either.
+    # The audio.zig kernel only frames PCM; no libopus is linked. Returning
+    # :not_implemented explicitly prevents silent round-trip-as-opus bugs.
+    {:error, :not_implemented}
+  end
+
+  @impl true
+  def opus_available?, do: false
+
   # ---------------------------------------------------------------------------
   # Crypto kernel — always Elixir (Erlang :crypto is native C already)
   # ---------------------------------------------------------------------------

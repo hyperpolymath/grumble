@@ -46,9 +46,11 @@ defmodule Burble.Coprocessor.ElixirBackend do
 
   @impl true
   def audio_encode(pcm, _sample_rate, channels, _bitrate) do
-    # Reference: pack PCM as 16-bit LE integers in a raw frame.
-    # Real Opus encoding requires the opus NIF or external library.
-    # This produces a PCM frame that can round-trip through audio_decode.
+    # PCM frame pack: clamp to [-1.0, 1.0], scale to i16 LE, length-prefix.
+    # NOT Opus compression — this round-trips raw PCM through audio_decode/3
+    # for recording, archive, and self-test paths. Real Opus lives in the
+    # browser's WebRTC encoder; server-side Opus requires linking libopus and
+    # is gated behind opus_transcode/4 which returns {:error, :not_implemented}.
     samples =
       pcm
       |> Enum.map(fn sample ->
@@ -66,8 +68,9 @@ defmodule Burble.Coprocessor.ElixirBackend do
   end
 
   @impl true
-  def audio_decode(opus_frame, _sample_rate, _channels) do
-    case opus_frame do
+  def audio_decode(pcm_frame, _sample_rate, _channels) do
+    # PCM frame unpack — inverse of audio_encode/4. NOT Opus decode.
+    case pcm_frame do
       <<_ch::8, len::32-little, data::binary-size(len), _rest::binary>> ->
         samples =
           for <<sample::little-signed-16 <- data>> do
@@ -80,6 +83,19 @@ defmodule Burble.Coprocessor.ElixirBackend do
         {:error, :invalid_frame}
     end
   end
+
+  @impl true
+  def opus_transcode(_pcm_or_opus, _sample_rate, _channels, _bitrate) do
+    # Real Opus transcoding is not implemented server-side by design
+    # (SFU-opaque E2EE model). Linking libopus is a deferred decision
+    # tracked in STATE.a2ml [migration]. Callers wanting real Opus must
+    # either (a) rely on the browser's WebRTC Opus encoder/decoder, or
+    # (b) request libopus integration to be added to this backend.
+    {:error, :not_implemented}
+  end
+
+  @impl true
+  def opus_available?, do: false
 
   @impl true
   def audio_noise_gate(pcm, threshold_db) do

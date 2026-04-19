@@ -289,11 +289,18 @@ defmodule Burble.Coprocessor.SNIFBackend do
     do: ZigBackend.audio_encode(pcm, sample_rate, channels, bitrate)
 
   @impl true
-  def audio_decode(opus_frame, sample_rate, channels), 
-    do: ZigBackend.audio_decode(opus_frame, sample_rate, channels)
+  def audio_decode(pcm_frame, sample_rate, channels),
+    do: ZigBackend.audio_decode(pcm_frame, sample_rate, channels)
 
   @impl true
-  def audio_noise_gate(pcm, threshold_db), 
+  def opus_transcode(pcm_or_opus, sample_rate, channels, bitrate),
+    do: ZigBackend.opus_transcode(pcm_or_opus, sample_rate, channels, bitrate)
+
+  @impl true
+  def opus_available?, do: false
+
+  @impl true
+  def audio_noise_gate(pcm, threshold_db),
     do: ZigBackend.audio_noise_gate(pcm, threshold_db)
 
   @impl true

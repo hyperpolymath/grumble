@@ -742,19 +742,28 @@ defmodule Burble.Transport.RTSP do
     end
   end
 
-  # Dispatch RTSP methods. This is a minimal implementation — production
-  # would need full header parsing, session tracking, and RTP interleaving.
-  @spec handle_rtsp_method(:gen_tcp.socket(), String.t(), String.t()) :: :ok
-  defp handle_rtsp_method(client, "OPTIONS", _path) do
+  # Dispatch RTSP methods.
+  # Each clause receives the client socket, method, path, request headers map,
+  # and the current session_id for this TCP connection (nil until SETUP).
+  # Returns the (possibly updated) session_id — callers thread it across requests.
+  @spec handle_rtsp_method(
+          :gen_tcp.socket(),
+          String.t(),
+          String.t(),
+          %{String.t() => String.t()},
+          String.t() | nil
+        ) :: String.t() | nil
+  defp handle_rtsp_method(client, "OPTIONS", _path, _headers, session_id) do
     response =
       "RTSP/1.0 200 OK\r\n" <>
         "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN\r\n" <>
         "\r\n"
 
     :gen_tcp.send(client, response)
+    session_id
   end
 
-  defp handle_rtsp_method(client, "DESCRIBE", path) do
+  defp handle_rtsp_method(client, "DESCRIBE", path, _headers, session_id) do
     case get_sdp(path) do
       {:ok, sdp} ->
         response =
@@ -769,39 +778,161 @@ defmodule Burble.Transport.RTSP do
       {:error, :not_found} ->
         :gen_tcp.send(client, "RTSP/1.0 404 Not Found\r\n\r\n")
     end
+
+    session_id
   end
 
-  defp handle_rtsp_method(client, "SETUP", _path) do
-    # Minimal SETUP response — production would allocate RTP ports and
-    # create a transport session.
+  defp handle_rtsp_method(client, "SETUP", path, headers, _session_id) do
+    # Parse the Transport header to extract client RTP/RTCP port pair.
+    # RFC 7826 Transport header example:
+    #   Transport: RTP/AVP;unicast;client_port=4588-4589
+    {transport_type, client_port} =
+      case Map.get(headers, "transport") do
+        nil -> {:udp, nil}
+        t -> parse_transport_header(t)
+      end
+
+    # Generate a new session ID and SSRC for this RTP session.
+    sid = generate_session_id()
+    ssrc = generate_ssrc()
+
+    session = %Session{
+      id: sid,
+      mountpoint: path,
+      transport: transport_type,
+      client_port: client_port,
+      server_port: nil,
+      state: :ready,
+      ssrc: ssrc,
+      created_at: DateTime.utc_now()
+    }
+
+    # Persist the session in the GenServer's session table.
+    GenServer.call(__MODULE__, {:register_session, session})
+
+    Logger.debug(
+      "[Burble.Transport.RTSP] SETUP session=#{sid} mountpoint=#{path} " <>
+        "transport=#{transport_type} client_port=#{inspect(client_port)} ssrc=#{ssrc}"
+    )
+
+    # Build the Transport response line — echo back client_port if present.
+    transport_header =
+      case client_port do
+        {rtp, rtcp} ->
+          "RTP/AVP;unicast;client_port=#{rtp}-#{rtcp};ssrc=#{Integer.to_string(ssrc, 16)}"
+
+        nil ->
+          "RTP/AVP;unicast;ssrc=#{Integer.to_string(ssrc, 16)}"
+      end
+
     response =
       "RTSP/1.0 200 OK\r\n" <>
-        "Transport: RTP/AVP;unicast\r\n" <>
-        "Session: burble-rtsp-session\r\n" <>
+        "Transport: #{transport_header}\r\n" <>
+        "Session: #{sid}\r\n" <>
         "\r\n"
 
     :gen_tcp.send(client, response)
+    sid
   end
 
-  defp handle_rtsp_method(client, "PLAY", _path) do
-    # Subscribe the caller to the mountpoint's RTP stream.
-    # In production, this would wire the subscriber PID to
-    # receive {:rtsp_rtp, ...} messages and relay them via RTP/UDP.
-    response =
-      "RTSP/1.0 200 OK\r\n" <>
-        "Session: burble-rtsp-session\r\n" <>
-        "\r\n"
+  defp handle_rtsp_method(client, "PLAY", _path, headers, session_id) do
+    # Resolve the session ID: prefer the Session header from the client, fall
+    # back to the one we're tracking on this TCP connection.
+    resolved_id = Map.get(headers, "session", session_id)
 
-    :gen_tcp.send(client, response)
+    case resolved_id && GenServer.call(__MODULE__, {:get_session, resolved_id}) do
+      {:ok, %Session{state: :ready} = session} ->
+        # Transition to :playing.
+        GenServer.call(__MODULE__, {:transition_session, session.id, :playing})
+
+        Logger.debug("[Burble.Transport.RTSP] PLAY session=#{session.id} → :playing")
+
+        response =
+          "RTSP/1.0 200 OK\r\n" <>
+            "Session: #{session.id}\r\n" <>
+            "\r\n"
+
+        :gen_tcp.send(client, response)
+
+      {:ok, %Session{state: bad_state}} ->
+        # Session exists but is not in :ready state — reject PLAY.
+        Logger.warning(
+          "[Burble.Transport.RTSP] PLAY rejected: session #{resolved_id} is in state #{bad_state}"
+        )
+
+        :gen_tcp.send(client, "RTSP/1.0 455 Method Not Valid In This State\r\n\r\n")
+
+      {:error, :not_found} ->
+        Logger.warning("[Burble.Transport.RTSP] PLAY rejected: unknown session #{inspect(resolved_id)}")
+        :gen_tcp.send(client, "RTSP/1.0 454 Session Not Found\r\n\r\n")
+
+      nil ->
+        # No session ID at all — client skipped SETUP.
+        Logger.warning("[Burble.Transport.RTSP] PLAY rejected: no session established")
+        :gen_tcp.send(client, "RTSP/1.0 454 Session Not Found\r\n\r\n")
+    end
+
+    resolved_id
   end
 
-  defp handle_rtsp_method(client, "TEARDOWN", _path) do
+  defp handle_rtsp_method(client, "TEARDOWN", _path, headers, session_id) do
+    resolved_id = Map.get(headers, "session", session_id)
+
+    if resolved_id do
+      # Transition to :teardown then remove the session.
+      GenServer.call(__MODULE__, {:transition_session, resolved_id, :teardown})
+      GenServer.call(__MODULE__, {:delete_session, resolved_id})
+      Logger.debug("[Burble.Transport.RTSP] TEARDOWN session=#{resolved_id} cleaned up")
+    end
+
     :gen_tcp.send(client, "RTSP/1.0 200 OK\r\n\r\n")
     :gen_tcp.close(client)
+    nil
   end
 
-  defp handle_rtsp_method(client, method, _path) do
+  defp handle_rtsp_method(client, method, _path, _headers, session_id) do
     Logger.debug("[Burble.Transport.RTSP] Unsupported RTSP method: #{method}")
     :gen_tcp.send(client, "RTSP/1.0 405 Method Not Allowed\r\n\r\n")
+    session_id
+  end
+
+  # Parse an RTSP Transport header and extract transport type + client port pair.
+  # Example input: "RTP/AVP;unicast;client_port=4588-4589"
+  # Returns {transport_type, client_port} where transport_type is :udp or
+  # :tcp_interleaved, and client_port is {rtp_port, rtcp_port} or nil.
+  @spec parse_transport_header(String.t()) ::
+          {:udp | :tcp_interleaved, {non_neg_integer(), non_neg_integer()} | nil}
+  defp parse_transport_header(header) do
+    parts = String.split(header, ";") |> Enum.map(&String.trim/1)
+
+    transport_type =
+      if Enum.any?(parts, &(String.downcase(&1) == "interleaved" or String.starts_with?(String.downcase(&1), "rtp/avp/tcp"))) do
+        :tcp_interleaved
+      else
+        :udp
+      end
+
+    client_port =
+      Enum.find_value(parts, fn part ->
+        case Regex.run(~r/^client_port=(\d+)-(\d+)$/i, part) do
+          [_, rtp, rtcp] -> {String.to_integer(rtp), String.to_integer(rtcp)}
+          _ -> nil
+        end
+      end)
+
+    {transport_type, client_port}
+  end
+
+  # Generate a URL-safe random session ID (16 hex characters).
+  @spec generate_session_id() :: String.t()
+  defp generate_session_id do
+    :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+  end
+
+  # Generate a random 32-bit SSRC value (RFC 3550).
+  @spec generate_ssrc() :: non_neg_integer()
+  defp generate_ssrc do
+    <<ssrc::unsigned-integer-32>> = :crypto.strong_rand_bytes(4)
+    ssrc
   end
 end

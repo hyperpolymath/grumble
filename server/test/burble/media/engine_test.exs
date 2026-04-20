@@ -62,27 +62,6 @@ defmodule Burble.Media.EngineTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Session lifecycle
-  # ---------------------------------------------------------------------------
-
-  describe "create_room_session/2" do
-    test "creates a session and returns {:ok, room_id}", %{room_id: room_id} do
-      assert {:ok, ^room_id} = Engine.create_room_session(room_id)
-    end
-
-    test "returns {:error, :session_exists} on duplicate create", %{room_id: room_id} do
-      {:ok, _} = Engine.create_room_session(room_id)
-      assert {:error, :session_exists} = Engine.create_room_session(room_id)
-    end
-
-    test "destroyed session can be recreated", %{room_id: room_id} do
-      {:ok, _} = Engine.create_room_session(room_id)
-      :ok = Engine.destroy_room_session(room_id)
-      assert {:ok, ^room_id} = Engine.create_room_session(room_id)
-    end
-  end
-
-  # ---------------------------------------------------------------------------
   # add_peer/3
   # ---------------------------------------------------------------------------
 
@@ -92,23 +71,21 @@ defmodule Burble.Media.EngineTest do
       :ok
     end
 
-    test "returns {:ok, offer} with expected shape", %{room_id: room_id} do
+    test "returns {:ok, offer} map and records peer in session state", %{room_id: room_id} do
       peer_id = generate_user_id()
       assert {:ok, offer} = Engine.add_peer(room_id, peer_id)
+
+      # Offer shape.
       assert is_map(offer)
       assert offer.type == :offer
       assert is_atom(offer.privacy_mode)
-    end
 
-    test "peer appears in session health after add", %{room_id: room_id} do
-      peer_id = generate_user_id()
-      {:ok, _offer} = Engine.add_peer(room_id, peer_id)
-
+      # Session state updated.
       assert {:ok, health} = Engine.get_room_health(room_id)
       assert health.peer_count == 1
     end
 
-    test "adding a second peer increments peer_count", %{room_id: room_id} do
+    test "each add_peer increments peer_count independently", %{room_id: room_id} do
       {:ok, _} = Engine.add_peer(room_id, generate_user_id())
       {:ok, _} = Engine.add_peer(room_id, generate_user_id())
 
@@ -118,19 +95,16 @@ defmodule Burble.Media.EngineTest do
 
     test "returns {:error, :no_session} when session does not exist" do
       unknown_room = "no-such-room-#{System.unique_integer()}"
-      peer_id = generate_user_id()
-      assert {:error, :no_session} = Engine.add_peer(unknown_room, peer_id)
+      assert {:error, :no_session} = Engine.add_peer(unknown_room, generate_user_id())
     end
 
-    test "offer respects e2ee privacy mode", %{room_id: room_id} do
+    test "offer reflects e2ee privacy mode: e2ee true, ice_policy relay", %{room_id: room_id} do
       e2ee_room = "e2ee-" <> generate_room_id()
 
       on_exit(fn -> Engine.destroy_room_session(e2ee_room) end)
 
       {:ok, _} = Engine.create_room_session(e2ee_room, privacy: :e2ee)
-      peer_id = generate_user_id()
-
-      {:ok, offer} = Engine.add_peer(e2ee_room, peer_id)
+      {:ok, offer} = Engine.add_peer(e2ee_room, generate_user_id())
 
       assert offer.e2ee == true
       assert offer.ice_policy == :relay

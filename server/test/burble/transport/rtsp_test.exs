@@ -197,44 +197,56 @@ defmodule Burble.Transport.RTSPTest do
   # ---------------------------------------------------------------------------
   # 6. parse_transport_header/1 — UDP client_port and TCP interleaved mode
   # ---------------------------------------------------------------------------
+  #
+  # parse_transport_header/1 is a private defp.  We exercise it indirectly
+  # by sending real RTSP SETUP requests over the TCP listener on @test_port
+  # and inspecting the resulting session state stored in the GenServer.
 
-  describe "parse_transport_header/1" do
-    # parse_transport_header is private, so we exercise it indirectly via the
-    # GenServer's SETUP path.  We can also call it directly using the module
-    # internals by sending a crafted SETUP over a real TCP connection.
-    # Because wiring a full TCP flow here is heavy, we instead reach the
-    # private function via :erlang.apply/3 on the module, acknowledging
-    # that this tests the private API as a deliberate white-box choice.
+  describe "parse_transport_header/1 (via SETUP over TCP)" do
+    # The RTSP SETUP handler calls GenServer.call(__MODULE__, {:register_session, session})
+    # internally, so we need the test server registered under the module name for
+    # each of these tests.
 
-    test "extracts UDP client_port pair from standard Transport header" do
-      header = "RTP/AVP;unicast;client_port=4588-4589"
-      {transport, port} = call_parse_transport_header(header)
+    test "standard UDP Transport header stores :udp and client_port pair", %{server: server} do
+      with_named(server, fn ->
+        sid = rtsp_setup(@test_port, "/live/test/speaker",
+          "RTP/AVP;unicast;client_port=4588-4589")
 
-      assert transport == :udp
-      assert port == {4588, 4589}
+        assert {:ok, session} = RTSP.get_session(server, sid)
+        assert session.transport == :udp
+        assert session.client_port == {4588, 4589}
+      end)
     end
 
-    test "detects TCP interleaved mode from RTP/AVP/TCP prefix" do
-      header = "RTP/AVP/TCP;unicast;interleaved=0-1"
-      {transport, _port} = call_parse_transport_header(header)
+    test "RTP/AVP/TCP Transport header stores :tcp_interleaved", %{server: server} do
+      with_named(server, fn ->
+        sid = rtsp_setup(@test_port, "/live/test/speaker",
+          "RTP/AVP/TCP;unicast;interleaved=0-1")
 
-      assert transport == :tcp_interleaved
+        assert {:ok, session} = RTSP.get_session(server, sid)
+        assert session.transport == :tcp_interleaved
+      end)
     end
 
-    test "detects TCP interleaved mode from explicit interleaved token" do
-      header = "RTP/AVP;unicast;interleaved;client_port=5000-5001"
-      {transport, port} = call_parse_transport_header(header)
+    test "explicit 'interleaved' token stores :tcp_interleaved and extracts port", %{server: server} do
+      with_named(server, fn ->
+        sid = rtsp_setup(@test_port, "/live/test/speaker",
+          "RTP/AVP;unicast;interleaved;client_port=5000-5001")
 
-      assert transport == :tcp_interleaved
-      assert port == {5000, 5001}
+        assert {:ok, session} = RTSP.get_session(server, sid)
+        assert session.transport == :tcp_interleaved
+        assert session.client_port == {5000, 5001}
+      end)
     end
 
-    test "returns nil client_port when client_port token is absent" do
-      header = "RTP/AVP;unicast"
-      {transport, port} = call_parse_transport_header(header)
+    test "absent client_port token stores nil client_port", %{server: server} do
+      with_named(server, fn ->
+        sid = rtsp_setup(@test_port, "/live/test/speaker",
+          "RTP/AVP;unicast")
 
-      assert transport == :udp
-      assert port == nil
+        assert {:ok, session} = RTSP.get_session(server, sid)
+        assert session.client_port == nil
+      end)
     end
   end
 
@@ -353,16 +365,71 @@ defmodule Burble.Transport.RTSPTest do
     end
   end
 
-  # Invoke the private parse_transport_header/1 via apply so we can test the
-  # parser logic without a full TCP round-trip.
-  defp call_parse_transport_header(header) do
-    :erlang.apply(RTSP, :parse_transport_header, [header])
-  rescue
-    UndefinedFunctionError ->
-      # If the function is not exported we get UndefinedFunctionError.
-      # Fall back to sending a synthetic SETUP through the server state.
-      # This branch should never be reached as parse_transport_header is
-      # accessible to the test via the module function table.
-      raise "parse_transport_header is not accessible — check RTSP module visibility"
+  # Send a minimal RTSP SETUP request over TCP and return the session ID
+  # parsed from the server's "Session: <id>" response header.
+  #
+  # The function opens its own TCP connection (so it doesn't interfere with
+  # the main test connection), sends OPTIONS then SETUP, reads the response,
+  # and closes the socket.  The returned session ID can then be used with
+  # RTSP.get_session/2 to inspect the stored Session struct.
+  defp rtsp_setup(port, path, transport_header) do
+    {:ok, sock} =
+      :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false, packet: :line], 3_000)
+
+    # OPTIONS first so the connection is primed.
+    :gen_tcp.send(sock, "OPTIONS rtsp://127.0.0.1:#{port}#{path} RTSP/1.0\r\n\r\n")
+    # Drain the OPTIONS response (200 OK + headers + blank line).
+    drain_response(sock)
+
+    # SETUP with the provided Transport header.
+    :gen_tcp.send(
+      sock,
+      "SETUP rtsp://127.0.0.1:#{port}#{path} RTSP/1.0\r\n" <>
+        "Transport: #{transport_header}\r\n" <>
+        "\r\n"
+    )
+
+    session_id = parse_session_id_from_response(sock)
+    :gen_tcp.close(sock)
+    session_id
+  end
+
+  # Read lines until a blank line (end of response headers), returning all
+  # header lines as a flat string so the caller can extract what it needs.
+  defp drain_response(sock) do
+    case :gen_tcp.recv(sock, 0, 3_000) do
+      {:ok, line} ->
+        if String.trim(line) == "", do: :ok, else: drain_response(sock)
+
+      {:error, _} ->
+        :ok
+    end
+  end
+
+  # Read RTSP response headers and extract the value of the "Session:" header.
+  defp parse_session_id_from_response(sock) do
+    parse_session_id_from_response(sock, nil)
+  end
+
+  defp parse_session_id_from_response(sock, found) do
+    case :gen_tcp.recv(sock, 0, 3_000) do
+      {:ok, line} ->
+        trimmed = String.trim(line)
+
+        if trimmed == "" do
+          found
+        else
+          new_found =
+            case Regex.run(~r/^Session:\s*(.+)$/i, trimmed) do
+              [_, sid] -> String.trim(sid)
+              _ -> found
+            end
+
+          parse_session_id_from_response(sock, new_found)
+        end
+
+      {:error, _} ->
+        found
+    end
   end
 end

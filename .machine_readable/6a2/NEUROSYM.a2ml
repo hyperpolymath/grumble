@@ -22,7 +22,7 @@ rules = [
   { name = "no-opus-pretence", pattern = "opus_encode|opus_decode", severity = "warning", scope = "*.ex", note = "Backend.audio_encode is PCM framing, not Opus. Use opus_transcode/4 explicitly." },
   { name = "stub-nif-returns-error", pattern = "simulated response", severity = "critical", scope = "*.ex", note = "Burble.LLM.process_query must not return simulated strings in production" },
   { name = "no-system-time-outside-ptp", pattern = "System\\.system_time", severity = "warning", scope = "*.ex", note = "Should go through Burble.Timing.PTP.now/0 for clock-source awareness" },
-  { name = "tflite-model-path-validated", pattern = "nif_neural_init_model", severity = "warning", scope = "*.ex", note = "Model path not validated; model file not in priv/" },
+  { name = "neural-is-spectral-gating", pattern = "nif_neural_init_model", severity = "info", scope = "*.ex", note = "Neural denoiser is Phase 1 spectral gating (ffi/zig/src/coprocessor/neural.zig), not TFLite. Works as-is. Phase 2 (RNNoise) is planned but not blocking." },
 ]
 
 [neural-config]

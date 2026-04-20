@@ -24,7 +24,7 @@ milestones = [
   { name = "v0.1.0 to v0.4.0 — Foundation & Transport", completion = 100 },
   { name = "v1.0.0 — Stable Release", completion = 100 },
   { name = "Phase 0 — Scrub baseline (V-lang removed, docs honest)", completion = 100, date = "2026-04-16" },
-  { name = "Phase 1 — Audio dependable (Opus honest, jitter sync, comfort noise, REMB, Avow chain)", completion = 0 },
+  { name = "Phase 1 — Audio dependable (Opus honest, comfort noise, REMB, Avow chain, echo-cancel ref, neural spectral-gate verified)", completion = 85 },
   { name = "Phase 2 — P2P AI channel dependable (burble-ai-bridge fixes, round-trip tests, docs) — CRITICAL PATH for family/pair-programming use case", completion = 30 },
   { name = "Phase 2b — server-side Burble.LLM (provider, circuit breaker, fixed parse_frame, NimblePool wired) — SECONDARY, not required for family use case", completion = 0 },
   { name = "Phase 3 — RTSP + signaling + text + AffineScript client start", completion = 0 },
@@ -61,11 +61,12 @@ phase-2-p2p-ai-bridge = [
 ]
 phase-1-audio = [
   "DONE 2026-04-16: Opus honest contract (opus_transcode returns :not_implemented)",
-  "NEXT: Validate TFLite neural model or gate behind feature flag",
-  "NEXT: Wire RTP-timestamp jitter sync across peers (precursor to PTP phase)",
-  "NEXT: Server-side comfort noise injection on RX silence",
-  "NEXT: REMB bitrate adaptation feedback loop",
-  "NEXT: Replace Avow stub with hash-chain audit log + non-circularity property test"
+  "DONE 2026-04-16: Neural denoiser is spectral gating (not TFLite) — already working, no gating needed. TFLite concern was about deleted api/zig/.",
+  "DONE 2026-04-16: Pipeline echo cancel now uses real playback reference (was hardcoded silence — always no-op)",
+  "DONE 2026-04-16: Server-side comfort noise injection after 3 silent frames (60ms at 20ms/frame)",
+  "DONE 2026-04-16: REMB bitrate adaptation — Pipeline.update_bitrate/3 wired via Backend.io_adaptive_bitrate",
+  "DONE 2026-04-16: Avow hash-chain linkage + ETS store + 10 property tests (commit 43669aa)",
+  "NEXT: Wire RTP-timestamp sync in media/peer.ex → Pipeline (precursor to PTP Phase 4, not blocking audio)"
 ]
 
 [maintenance-status]

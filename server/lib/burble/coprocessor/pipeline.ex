@@ -132,6 +132,14 @@ defmodule Burble.Coprocessor.Pipeline do
       neural_state: neural_state,
       jitter_buffer: %{},
       prev_frames: [],
+      # Playback reference for echo cancellation — populated from decoded
+      # inbound frames so the echo canceller has a real speaker signal to
+      # subtract from the capture. When this is empty (no inbound audio yet),
+      # echo cancel runs against silence (harmless no-op until first frame).
+      playback_ref: [],
+      # Silence counter: frames since last non-nil inbound. Drives comfort
+      # noise injection so peers don't hear dead air when a speaker pauses.
+      silence_frames: 0,
       # Metrics
       frames_processed: 0,
       frames_dropped: 0,
@@ -158,9 +166,13 @@ defmodule Burble.Coprocessor.Pipeline do
     # Step 2: Noise gate.
     pcm = Backend.audio_noise_gate(pcm, config.noise_gate_db)
 
-    # Step 3: Echo cancellation (needs reference — use silence if none).
-    # In production, the reference comes from the playback buffer.
-    reference = List.duplicate(0.0, length(pcm))
+    # Step 3: Echo cancellation — use real playback reference when available.
+    reference =
+      case state.playback_ref do
+        ref when is_list(ref) and length(ref) == length(pcm) -> ref
+        _ -> List.duplicate(0.0, length(pcm))
+      end
+
     pcm = Backend.audio_echo_cancel(pcm, reference, config.echo_cancel_taps)
 
     # Step 4: Encode.
@@ -202,8 +214,18 @@ defmodule Burble.Coprocessor.Pipeline do
 
     case buffered do
       nil ->
-        # Buffer not ready to emit — need more packets.
-        {:reply, {:ok, nil}, state}
+        # Buffer not ready to emit — need more packets. If we've been
+        # silent for enough frames, inject comfort noise so the peer
+        # doesn't hear dead air. This is a server-side injection only;
+        # the client's own comfort noise generator handles the local side.
+        silence_frames = state.silence_frames + 1
+
+        if silence_frames >= 3 do
+          comfort = Backend.audio_comfort_noise(960, -60.0, %{})
+          {:reply, {:ok, comfort}, %{state | silence_frames: silence_frames}}
+        else
+          {:reply, {:ok, nil}, %{state | silence_frames: silence_frames}}
+        end
 
       ready_frame ->
         # Step 2: Check for loss (gap in sequence numbers handled by jitter buffer).
@@ -230,7 +252,9 @@ defmodule Burble.Coprocessor.Pipeline do
           {:ok, pcm} ->
             new_state = %{state |
               frames_processed: state.frames_processed + 1,
-              prev_frames: [ready_frame | Enum.take(state.prev_frames, 2)]
+              prev_frames: [ready_frame | Enum.take(state.prev_frames, 2)],
+              playback_ref: pcm,
+              silence_frames: 0
             }
 
             {:reply, {:ok, pcm}, new_state}
@@ -271,6 +295,36 @@ defmodule Burble.Coprocessor.Pipeline do
     }
 
     {:reply, {:ok, health}, state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Bitrate adaptation (REMB feedback)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Update the encoding bitrate based on REMB (Receiver Estimated Maximum
+  Bitrate) feedback from the peer's PeerConnection.
+
+  Called by `Burble.Media.Peer` when it receives an RTCP REMB packet
+  indicating the remote client's available bandwidth. The pipeline adjusts
+  its PCM framing bitrate accordingly (primarily affects self-test and
+  archive paths; live SFU forwarding is opaque Opus which the browser
+  adjusts independently).
+  """
+  def update_bitrate(pipeline, loss_ratio, rtt_ms) do
+    GenServer.cast(pipeline, {:update_bitrate, loss_ratio, rtt_ms})
+  end
+
+  @impl true
+  def handle_cast({:update_bitrate, loss_ratio, rtt_ms}, state) do
+    new_bitrate = Backend.io_adaptive_bitrate(loss_ratio, rtt_ms, state.current_bitrate)
+
+    if new_bitrate != state.current_bitrate do
+      Logger.info("[Pipeline] Bitrate #{state.current_bitrate} → #{new_bitrate} " <>
+                  "(loss=#{Float.round(loss_ratio * 100, 1)}%, rtt=#{rtt_ms}ms)")
+    end
+
+    {:noreply, %{state | current_bitrate: new_bitrate}}
   end
 
   # ---------------------------------------------------------------------------

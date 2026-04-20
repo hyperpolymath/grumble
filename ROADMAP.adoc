@@ -78,7 +78,7 @@ Based on recent comprehensive audits, the following areas must be addressed befo
 * [ ] **Must-Have Tooling Rollout:** Enforce Credo, Dialyzer, and GitHub Actions in the primary pipeline.
 * [ ] **Should-Have Integrations:** Add `Proven` for formal verification, `Bypass` for testing, and `Telemetry` dashboards.
 * [ ] **Aspirational Features:** Livebook interaction, WebAssembly (Wasm) client builds, and EXLA GPU acceleration.
-* [ ] **Documentation:** Expand examples and onboarding guides for the V-Based Dodeca-API adapter.
+* [ ] **Documentation:** Expand examples and onboarding guides for the Zig FFI coprocessor API.
 
 === 6. User UX/UI
 * [ ] **Mobile Touch Optimization:** Ensure large touch targets and simplified gestures.

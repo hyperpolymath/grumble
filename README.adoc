@@ -64,10 +64,11 @@ modern browser-based joining — no downloads, no accounts, no friction.
 pure Elixir for LZ4 compression, 62x for echo cancellation, 37x for FFT. Your
 server doesn't break a sweat.
 
-**Precision Time Protocol** — IEEE 1588 PTP support with sub-microsecond
-synchronisation across nodes. Automatic clock source detection with graceful
-fallback (PTP hardware → phc2sys → NTP → system). Built for multi-server
-deployments where timing matters.
+**Precision Time Protocol** — IEEE 1588 PTP clock source detection with
+graceful fallback (PTP hardware → phc2sys → NTP → system). Sub-microsecond
+accuracy when a PTP hardware clock is available; ~1ms via NTP on typical
+deployments. Jitter measurement, telemetry, and multi-node alignment data
+export built in. Hardware clock NIF is a Phase 4 target.
 
 **Four topology modes** — From single-server (monarchic) to fully distributed
 mesh (serverless with mandatory E2EE). Set `BURBLE_TOPOLOGY` and go.
@@ -117,7 +118,7 @@ cd client/web && deno task dev
 [source,bash]
 ----
 just test          # All tests
-just test-server   # Elixir tests (49 tests)
+just test-server   # Elixir tests (300+)
 just test-ffi      # Zig coprocessor tests
 just bench         # Elixir vs Zig benchmarks
 ----

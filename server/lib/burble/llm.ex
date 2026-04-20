@@ -40,8 +40,14 @@ defmodule Burble.LLM.Registry do
   """
 
   def register_connection(user_id, pid) do
-    # In reality, uses Registry.register/3
-    _ = {user_id, pid}
+    :persistent_term.put({__MODULE__, user_id}, pid)
     :ok
+  end
+
+  def lookup_connection(user_id) do
+    case :persistent_term.get({__MODULE__, user_id}, nil) do
+      nil -> {:error, :not_found}
+      pid -> {:ok, pid}
+    end
   end
 end

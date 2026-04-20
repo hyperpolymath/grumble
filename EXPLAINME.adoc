@@ -170,7 +170,7 @@ hyperpolymath repos:
 | **Chainguard containers**
 | All containerised repos via https://github.com/hyperpolymath/stapeln[Stapeln]
 
-| **ReScript frontend**
+| **AffineScript frontend** (migrating from ReScript)
 | https://github.com/hyperpolymath/idaptik[IDApTIK] (game UI),
   https://github.com/hyperpolymath/panll[PanLL] (workspace panels)
 |===

@@ -204,7 +204,7 @@ project/
 
 === Language Tiers
 
-* **Tier 1** (Gold): Rust, Elixir, Zig, Ada, Haskell, ReScript, Gleam
+* **Tier 1** (Gold): Rust, Elixir, Zig, Ada, Haskell, AffineScript, Gleam
 * **Tier 2** (Silver): Nickel, Guile Scheme, Nix, Idris2, OCaml
 * **Infrastructure**: Guix channels, derivations, Julia batch scripts
 

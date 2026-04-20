@@ -119,11 +119,11 @@ defmodule Burble.LLM.Protocol do
       "" -> {:error, :empty_frame}
       data ->
         try do
-          {_type, rest} = String.split(data, "\n", parts: 2)
-          [type | rest] = String.split(rest, "\n")
-          
+          [_header_line, rest] = String.split(data, "\n", parts: 2)
+          [type | lines] = String.split(rest, "\n")
+
           # Parse headers
-          headers = Enum.reduce(rest, %{}, fn line, acc ->
+          headers = Enum.reduce(lines, %{}, fn line, acc ->
             if String.contains?(line, ":") do
               [key, value] = String.split(line, ":", parts: 2)
               Map.put(acc, String.trim(key), String.trim(value))
@@ -131,8 +131,8 @@ defmodule Burble.LLM.Protocol do
               acc
             end
           end)
-          
-          Map.put(headers, :type, String.upcase(type))
+
+          {:ok, Map.put(headers, :type, String.upcase(type))}
         rescue
           _ -> {:error, :parse_error}
         end

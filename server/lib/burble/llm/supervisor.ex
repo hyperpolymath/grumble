@@ -39,9 +39,8 @@ defmodule Burble.LLM.Supervisor do
   def get_transport do
     case Supervisor.which_children(__MODULE__) do
       children when is_list(children) ->
-        # Find the transport child
         Enum.find_value(children, {:error, :transport_not_running}, fn
-          {Burble.LLM.Transport, pid, :worker, [Burble.LLM.Transport]} -> 
+          {Burble.LLM.Transport, pid, :worker, _modules} when is_pid(pid) ->
             {:ok, pid}
           _ -> nil
         end)

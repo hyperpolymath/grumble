@@ -72,6 +72,25 @@ defmodule Burble.Transport.RTSP do
   require Logger
 
   # ---------------------------------------------------------------------------
+  # Session state machine
+  # ---------------------------------------------------------------------------
+
+  defmodule Session do
+    defstruct [:id, :mountpoint, :transport, :client_port, :server_port, :state, :ssrc, :created_at]
+
+    @type t :: %__MODULE__{
+      id: String.t(),
+      mountpoint: String.t(),
+      transport: :udp | :tcp_interleaved,
+      client_port: {non_neg_integer(), non_neg_integer()} | nil,
+      server_port: {non_neg_integer(), non_neg_integer()} | nil,
+      state: :init | :ready | :playing | :teardown,
+      ssrc: non_neg_integer(),
+      created_at: DateTime.t()
+    }
+  end
+
+  # ---------------------------------------------------------------------------
   # Type definitions
   # ---------------------------------------------------------------------------
 
@@ -102,11 +121,12 @@ defmodule Burble.Transport.RTSP do
           packet_count: non_neg_integer()
         }
 
-  @typedoc "GenServer state: listener socket + mountpoint registry."
+  @typedoc "GenServer state: listener socket, mountpoint registry, and RTP session table."
   @type state :: %{
           listener: :gen_tcp.socket() | nil,
           mountpoints: %{mountpoint_path() => mountpoint()},
           rtp_sockets: %{mountpoint_path() => :gen_udp.socket()},
+          sessions: %{String.t() => Session.t()},
           config: keyword()
         }
 
@@ -234,6 +254,16 @@ defmodule Burble.Transport.RTSP do
     GenServer.call(__MODULE__, {:get_sdp, path})
   end
 
+  @doc """
+  Return the `Session` struct for a given session ID, or `{:error, :not_found}`.
+
+  Useful for inspecting session state from tests or other processes.
+  """
+  @spec get_session(GenServer.server(), String.t()) :: {:ok, Session.t()} | {:error, :not_found}
+  def get_session(server \\ __MODULE__, session_id) do
+    GenServer.call(server, {:get_session, session_id})
+  end
+
   # ---------------------------------------------------------------------------
   # GenServer callbacks
   # ---------------------------------------------------------------------------
@@ -248,6 +278,8 @@ defmodule Burble.Transport.RTSP do
       listener: nil,
       mountpoints: %{},
       rtp_sockets: %{},
+      # RTP session table: maps session_id => Session.t()
+      sessions: %{},
       config: config,
       # SECURITY FIX: Track active RTSP handler processes to enforce a
       # connection pool limit. Without this, each incoming TCP connection
@@ -385,6 +417,39 @@ defmodule Burble.Transport.RTSP do
       nil -> {:reply, {:error, :not_found}, state}
       mount -> {:reply, {:ok, mount.sdp}, state}
     end
+  end
+
+  @impl true
+  def handle_call({:get_session, session_id}, _from, state) do
+    case Map.get(state.sessions, session_id) do
+      nil -> {:reply, {:error, :not_found}, state}
+      session -> {:reply, {:ok, session}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:register_session, session}, _from, state) do
+    updated = put_in(state, [:sessions, session.id], session)
+    {:reply, :ok, updated}
+  end
+
+  @impl true
+  def handle_call({:transition_session, session_id, new_state}, _from, state) do
+    case Map.get(state.sessions, session_id) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      session ->
+        updated_session = %{session | state: new_state}
+        updated = put_in(state, [:sessions, session_id], updated_session)
+        {:reply, {:ok, updated_session}, updated}
+    end
+  end
+
+  @impl true
+  def handle_call({:delete_session, session_id}, _from, state) do
+    updated = %{state | sessions: Map.delete(state.sessions, session_id)}
+    {:reply, :ok, updated}
   end
 
   @impl true
@@ -600,16 +665,20 @@ defmodule Burble.Transport.RTSP do
 
   # Handle a single RTSP control session (one TCP connection from a viewer).
   # Implements the minimal RTSP method set: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN.
-  @spec handle_rtsp_session(:gen_tcp.socket(), state()) :: :ok
-  defp handle_rtsp_session(client, state) do
+  # `session_id` accumulates across requests on the same TCP connection so that
+  # PLAY and TEARDOWN can resolve the correct Session struct.
+  @spec handle_rtsp_session(:gen_tcp.socket(), state(), String.t() | nil) :: :ok
+  defp handle_rtsp_session(client, state, session_id \\ nil) do
     case :gen_tcp.recv(client, 0, 30_000) do
       {:ok, line} ->
         # Parse the RTSP request line (e.g., "DESCRIBE rtsp://host/path RTSP/1.0").
         case parse_rtsp_request(line) do
           {:ok, method, path, _version} ->
-            handle_rtsp_method(client, method, path)
+            # Read all headers that follow the request line before dispatching.
+            headers = read_headers(client)
+            new_session_id = handle_rtsp_method(client, method, path, headers, session_id)
             # Continue reading requests on this session.
-            handle_rtsp_session(client, state)
+            handle_rtsp_session(client, state, new_session_id)
 
           {:error, _} ->
             Logger.debug("[Burble.Transport.RTSP] Malformed RTSP request, closing")
@@ -626,6 +695,36 @@ defmodule Burble.Transport.RTSP do
       {:error, reason} ->
         Logger.warning("[Burble.Transport.RTSP] RTSP recv error: #{inspect(reason)}")
         :gen_tcp.close(client)
+    end
+  end
+
+  # Read RTSP headers line-by-line until the blank line that ends the header block.
+  # Returns a map of downcased header names to their values.
+  @spec read_headers(:gen_tcp.socket()) :: %{String.t() => String.t()}
+  defp read_headers(client) do
+    read_headers(client, %{})
+  end
+
+  defp read_headers(client, acc) do
+    case :gen_tcp.recv(client, 0, 5_000) do
+      {:ok, line} ->
+        trimmed = String.trim(line)
+
+        if trimmed == "" do
+          # Blank line signals end of headers.
+          acc
+        else
+          case String.split(trimmed, ":", parts: 2) do
+            [name, value] ->
+              read_headers(client, Map.put(acc, String.downcase(String.trim(name)), String.trim(value)))
+
+            _ ->
+              read_headers(client, acc)
+          end
+        end
+
+      {:error, _} ->
+        acc
     end
   end
 

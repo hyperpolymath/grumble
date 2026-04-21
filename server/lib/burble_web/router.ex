@@ -71,6 +71,9 @@ defmodule BurbleWeb.Router do
     # LLM status (public — checks if provider is configured)
     get "/llm/status", LLMController, :status
 
+    # RTSP transport status (public — operator/monitoring endpoint)
+    get "/rtsp/status", RTSPController, :status
+
     # Instant connect — join via link/QR/code (public, no auth required)
     get "/join/:code", InstantConnectController, :lookup
     post "/join/:code", InstantConnectController, :redeem

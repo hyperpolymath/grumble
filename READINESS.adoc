@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= Burble — Component Readiness Gate (CRG) Assessment
+:toc: preamble
+:icons: font
+:revdate: 2026-04-21
+
+== Current CRG Grade: D (provisional, targeting C)
+
+Burble was demoted from grade C to grade D on 2026-04-18 per CRG v2.0 STRICT audit.
+See `docs/governance/CRG-AUDIT-2026-04-18.adoc` for the full audit record.
+
+This READINESS file is one of the three artefacts required to re-attain grade C.
+The other two are per-directory READMEs in core subtrees and CI test-pass evidence
+(see `.github/workflows/elixir-ci.yml`).
+
+=== Rationale for D grade
+
+* No READINESS file existed at the time of the audit.
+* Per-directory README coverage was absent from the seven core server and client subtrees.
+* No CI workflow providing test-pass evidence existed for the Elixir server.
+
+---
+
+== What IS ready for production use
+
+=== P2P Voice (WebRTC)
+
+The peer-to-peer voice path (`client/web/p2p-voice.html` + `client/web/burble-ai-bridge.js`)
+is fully operational. Two participants can connect via a room code, exchange encrypted
+DTLS-SRTP audio, and use the AI data channel for Claude-to-Claude messaging. The bridge
+has been validated end-to-end including 100-message burst ordering tests and WS reconnect
+resilience. No central server is required for this mode.
+
+=== AI Bridge
+
+`client/web/burble-ai-bridge.js` (Deno) exposes a stable HTTP API on `localhost:6474`:
+
+* `POST /send` — enqueue a JSON message for the remote peer
+* `GET  /recv` — drain the incoming message queue (FIFO)
+* `GET  /status` — connection health + queue depth
+* `GET  /health` — liveness probe
+
+The bridge has been in continuous use as the Claude-to-Claude coordination channel.
+
+=== LLM Service (server-side)
+
+`Burble.LLM` (Phase 2b) is fully wired: `AnthropicProvider` calls the Claude Messages API
+via `:httpc`, a circuit breaker (ETS-based, 5-failure threshold, 30 s open duration) prevents
+cascade failures, per-user rate limiting is enforced, SSE streaming is plumbed through to the
+Phoenix endpoint, and `NimblePool` gates concurrency to 10 concurrent workers. REST endpoints
+`/llm/query`, `/llm/stream`, and `/llm/status` are live.
+
+=== Elixir Server — Tested Modules
+
+The following server modules have 100 % test coverage (as of 2026-04-20):
+
+* Audio pipeline (echo cancel, comfort noise, REMB adaptation)
+* Avow hash-chain attestation (ETS store + 10 property tests)
+* ETS MessageStore (`Burble.Chat.MessageStore`)
+* ClockCorrelator OLS regression + RTP wraparound
+* Alignment multi-node offset + drift tracking (10 tests)
+* RoomChannel text:send / typing / history
+* Signaling relay
+
+---
+
+== What is NOT ready
+
+=== PTP Hardware Validation
+
+`Burble.Timing.PTP` detects `/dev/ptp0` (Intel I210 NIC) at startup and falls back
+gracefully through `phc2sys` → NTP → system clock. The code path for `:ptp_hardware`
+exists and the Zig NIF stub (`ffi/zig/src/coprocessor/ptp.zig`) is in place, but the
+NIF has not been validated against real hardware — the I210 card has not yet arrived.
+
+*Operational impact:* Sub-microsecond PTP accuracy is not available until hardware
+validation is complete. NTP-synchronised deployments achieve ~1 ms accuracy, which is
+acceptable for all current use cases.
+
+=== AffineScript Runtime Compilation
+
+All 35 ReScript source files have been ported to AffineScript (`.affine`). The
+`affinec` compiler is bundled in the `Containerfile` (OCaml + dune build). However,
+runtime compilation of `.affine` modules has not been exercised under the full CI
+matrix — only local developer builds have been validated. The `.res` files remain
+as fallback until this is verified.
+
+=== Avow Dependent-Type Enforcement
+
+The `Avow` attestation library enforces hash-chain linkage and data-type integrity
+at runtime, but dependent-type enforcement (the formal guarantee that values satisfy
+their declared types at the term level) is not wired. The Idris2 proofs exist in
+`verification/` and the Zig ABI mirror in `ffi/zig/src/abi.zig` reflects the
+proven type structure, but the enforcement bridge between the Elixir runtime and the
+proof engine is not complete.
+
+*Operational impact:* The system is safe by construction for the current use cases.
+Dependent-type enforcement is a correctness hardening measure, not a security boundary.
+
+---
+
+== Known Operational Requirements
+
+=== ANTHROPIC_API_KEY
+
+The server-side LLM service (`Burble.LLM`) requires this environment variable to be
+set. Without it the provider is unconfigured and all LLM queries return
+`{:error, :no_provider_configured}`. The P2P AI bridge is unaffected (it uses the
+local Claude Code instance, not the server).
+
+[source,bash]
+----
+export ANTHROPIC_API_KEY=sk-ant-…
+----
+
+=== PTP Hardware (for sub-microsecond timing)
+
+An Intel I210 (or compatible) PTP-capable NIC is required for `:ptp_hardware` clock
+source. Without it, the system falls back to `phc2sys` or NTP automatically. No
+configuration change is needed — detection is automatic at startup.
+
+=== Elixir 1.17+ / OTP 27+ / Zig 0.15+ / Deno 2+
+
+These are the minimum runtime versions validated by the CI workflow.
+
+---
+
+== How to Run the Test Suite
+
+[source,bash]
+----
+# All tests (Elixir server + Zig coprocessor)
+just test
+
+# Elixir server tests only (300+)
+cd server && mix test --cover
+
+# Zig coprocessor tests
+just test-ffi
+
+# Benchmark Elixir vs Zig (optional)
+just bench
+----
+
+---
+
+== How to Build the Container
+
+[source,bash]
+----
+podman build -f Containerfile -t burble:dev .
+
+# Or via compose (server + web client + VeriSimDB)
+cd containers && podman-compose -f compose.toml up
+----
+
+The container includes the `affinec` compiler (OCaml + dune), the Zig coprocessor
+NIF (`libburble_coprocessor.so`), and the Elixir release. No network access is
+required at runtime beyond the application ports.
+
+---
+
+== Contact / Issue Tracker
+
+* GitHub issues: https://github.com/hyperpolymath/burble/issues
+* Maintainer: Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+* Security vulnerabilities: see `SECURITY.md` (private disclosure process)

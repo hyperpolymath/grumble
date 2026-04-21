@@ -95,6 +95,11 @@ defmodule Burble.Application do
       # Blockchain anchoring bridge for Vext chains.
       Burble.Verification.Anchor,
 
+      # RTSP transport — serves broadcast/stage rooms and screen-share streams.
+      # Listens on TCP port 8554 (RTSP control) and allocates UDP port pairs for
+      # RTP media. Degrades gracefully if the port is unavailable.
+      Burble.Transport.RTSP,
+
       # LLM service — QUIC+TLS on 8503, TCP+TLS fallback on 8085
       # Provides real-time LLM query processing with streaming responses
       {Burble.LLM.Supervisor, [port: 8503, fallback_port: 8085]},

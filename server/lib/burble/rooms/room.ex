@@ -34,7 +34,10 @@ defmodule Burble.Rooms.Room do
 
   use GenServer, restart: :transient
 
+  require Logger
+
   alias Burble.Rooms.Participant
+  alias Burble.Transport.RTSP
 
   # Idle timeout: terminate room process after 5 minutes with no participants.
   @idle_timeout_ms 5 * 60 * 1_000
@@ -47,14 +50,19 @@ defmodule Burble.Rooms.Room do
   @type voice_state :: :connected | :muted | :deafened | :priority
   @type room_mode :: :open | :moderated | :presentation
 
+  # Room types that get an RTSP mountpoint for broadcast distribution.
+  @rtsp_room_types ["stage", "broadcast"]
+
   @type t :: %__MODULE__{
           id: String.t(),
           name: String.t(),
           server_id: String.t(),
+          type: String.t() | nil,
           mode: room_mode(),
           topology_mode: Burble.Topology.topology_mode(),
           max_participants: non_neg_integer(),
           participants: %{String.t() => Participant.t()},
+          rtsp_mountpoint: String.t() | nil,
           created_at: DateTime.t(),
           idle_timer: reference() | nil
         }
@@ -63,10 +71,12 @@ defmodule Burble.Rooms.Room do
     :id,
     :name,
     :server_id,
+    :type,
     :mode,
     :topology_mode,
     :max_participants,
     :participants,
+    :rtsp_mountpoint,
     :created_at,
     :idle_timer
   ]
@@ -111,14 +121,36 @@ defmodule Burble.Rooms.Room do
 
   @impl true
   def init(opts) do
+    room_id = Keyword.fetch!(opts, :id)
+    room_type = Keyword.get(opts, :type)
+
+    # Register an RTSP mountpoint for broadcast/stage rooms so the SFU can
+    # fan out a single RTP stream to N listeners without N PeerConnections.
+    rtsp_mountpoint =
+      if room_type in @rtsp_room_types do
+        case RTSP.register_mountpoint(room_id, :speaker) do
+          {:ok, path} ->
+            Logger.info("[Room #{room_id}] RTSP mountpoint created: #{path}")
+            path
+
+          {:error, reason} ->
+            Logger.warning(
+              "[Room #{room_id}] Failed to create RTSP mountpoint: #{inspect(reason)}"
+            )
+            nil
+        end
+      end
+
     room = %__MODULE__{
-      id: Keyword.fetch!(opts, :id),
+      id: room_id,
       name: Keyword.get(opts, :name, "Unnamed Room"),
       server_id: Keyword.fetch!(opts, :server_id),
+      type: room_type,
       mode: Keyword.get(opts, :mode, :open),
       topology_mode: Keyword.get(opts, :topology_mode, Burble.Topology.mode()),
       max_participants: Keyword.get(opts, :max_participants, @default_max_participants),
       participants: %{},
+      rtsp_mountpoint: rtsp_mountpoint,
       created_at: DateTime.utc_now(),
       idle_timer: schedule_idle_check()
     }
@@ -225,6 +257,26 @@ defmodule Burble.Rooms.Room do
     {:noreply, room}
   end
 
+  @impl true
+  def terminate(_reason, room) do
+    # Tear down the RTSP mountpoint when the room process exits (idle timeout,
+    # explicit shutdown, or crash). This disconnects all RTSP subscribers and
+    # frees the RTP socket allocated for the stream.
+    if room.rtsp_mountpoint do
+      case RTSP.remove_mountpoint(room.rtsp_mountpoint) do
+        :ok ->
+          Logger.info("[Room #{room.id}] RTSP mountpoint removed: #{room.rtsp_mountpoint}")
+
+        {:error, reason} ->
+          Logger.warning(
+            "[Room #{room.id}] Failed to remove RTSP mountpoint #{room.rtsp_mountpoint}: #{inspect(reason)}"
+          )
+      end
+    end
+
+    :ok
+  end
+
   # ── Private ──
 
   defp call_room(room_id, message) do
@@ -242,7 +294,9 @@ defmodule Burble.Rooms.Room do
     %{
       id: room.id,
       name: room.name,
+      type: room.type,
       mode: room.mode,
+      rtsp_mountpoint: room.rtsp_mountpoint,
       participant_count: map_size(room.participants),
       participants:
         room.participants

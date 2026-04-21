@@ -11,6 +11,7 @@ defmodule BurbleWeb.UserSocket do
   alias Burble.Auth.Guardian
 
   channel "room:*", BurbleWeb.RoomChannel
+  channel "signaling:*", BurbleWeb.SignalingChannel
 
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) do

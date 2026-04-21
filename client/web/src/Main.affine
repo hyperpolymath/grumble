@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// STUB — awaiting AffineScript compiler; ReScript version is authoritative until migration completes
+//
+// Main.affine — Entry point for the Burble web client.
+//
+// Initialises the application state, sets up routing, and
+// starts the render loop.
+
+@migrate_from("client/web/src/Main.res")
+
+// app is a linear resource: it must be initialised exactly once at startup
+// and must not be dropped without a clean shutdown path.
+let app: linear App.t = App.make()
+
+// Log startup info (borrows app, does not consume it).
+Console.log("[Burble] Web client initialised")
+Console.log2("[Burble] Route:", Routes.toString(app.currentRoute))
+Console.log2("[Burble] Auth:", AuthState.displayName(app.auth))
+
+// addPopStateListener: registers a navigation callback on the window.
+// The closure borrows app (affine borrow — called at most once per event).
+@val @scope("window")
+external addPopStateListener: (@as("popstate") _, affine ('a => unit)) => unit = "addEventListener"
+
+addPopStateListener(_ => {
+  let path: string = %raw(`window.location.pathname`)
+  App.handleUrlChange(app, path)
+})
+
+// Set initial page title (borrows app.currentRoute).
+let _ = {
+  open Webapi.Dom
+  document->Document.setTitle(Routes.title(app.currentRoute))
+}
+
+Console.log("[Burble] Voice first. Friction last. Complexity optional.")

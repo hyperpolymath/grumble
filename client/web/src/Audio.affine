@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// STUB — awaiting AffineScript compiler; ReScript version is authoritative until migration completes
+//
+// Audio.affine — Microphone and audio analysis helper.
+
+@migrate_from("client/web/src/Audio.res")
+
+open WebRTC
+
+// Context — wraps the Web Audio API.
+// AudioContext is a linear resource: it must be created and eventually closed.
+module Context = {
+  type linear ctx
+  type affine analyser
+  type affine source
+
+  // create: unit -> linear ctx
+  // Creates a new AudioContext (must be closed when done).
+  @new external create: unit => linear ctx = "AudioContext"
+
+  // createMediaStreamSource: borrows ctx, consumes stream, yields affine source.
+  @send external createMediaStreamSource: (ctx, linear RTC.stream) => affine source = "createMediaStreamSource"
+
+  // createAnalyser: borrows ctx, yields affine analyser.
+  @send external createAnalyser: ctx => affine analyser = "createAnalyser"
+
+  // setFftSize: mutates analyser in place (borrow).
+  @set external setFftSize: (analyser, int) => unit = "fftSize"
+
+  // getFrequencyBinCount: read-only borrow.
+  @get external getFrequencyBinCount: analyser => int = "frequencyBinCount"
+
+  // connect: consumes source (transfers it into the analyser graph).
+  @send external connect: (linear source, analyser) => unit = "connect"
+
+  // getByteFrequencyData: borrows both analyser and the output buffer.
+  @send external getByteFrequencyData: (analyser, Js.Typed_array.Uint8Array.t) => unit = "getByteFrequencyData"
+}
+
+// analyzer_state holds an affine analyser and its associated data buffer.
+// The struct itself is affine: it should not be duplicated.
+type affine analyzer_state = {
+  analyser: Context.analyser,
+  data_array: Js.Typed_array.Uint8Array.t,
+}
+
+// createAnalyzer: linear stream -> affine analyzer_state
+// Consumes the media stream, returns an analyzer that owns its audio graph.
+fn createAnalyzer: (linear stream: RTC.stream) => affine analyzer_state
+
+// getLevel: affine analyzer_state -> float
+// Borrows the analyzer state and returns a normalised 0–100 level.
+fn getLevel: (state: analyzer_state) => float

@@ -324,12 +324,112 @@ defmodule Burble.Coprocessor.SNIFBackend do
   def opus_available?, do: false
 
   @impl true
-  def audio_noise_gate(pcm, threshold_db),
-    do: ZigBackend.audio_noise_gate(pcm, threshold_db)
+  def audio_noise_gate(pcm, threshold_db) do
+    if available?() do
+      snif_noise_gate(pcm, threshold_db)
+    else
+      ZigBackend.audio_noise_gate(pcm, threshold_db)
+    end
+  end
 
   @impl true
-  def audio_echo_cancel(capture, reference, filter_length), 
-    do: ZigBackend.audio_echo_cancel(capture, reference, filter_length)
+  def audio_echo_cancel(capture, reference, filter_length) do
+    if available?() do
+      snif_echo_cancel(capture, reference, filter_length)
+    else
+      ZigBackend.audio_echo_cancel(capture, reference, filter_length)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # DSP kernel - noise gate with SNIF
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Applies a noise gate to a PCM signal using WebAssembly for crash isolation.
+
+  Attempts execution in the SNIF (WASM) sandbox first. Any WASM fault is caught
+  and converted to a `{:error, reason}` tuple; the function then falls back to
+  `ZigBackend.audio_noise_gate/2` so the audio pipeline is never interrupted.
+
+  ## Parameters
+
+  - `pcm`: List of floats — time-domain samples
+  - `threshold_db`: Float — gate open threshold in dBFS (e.g. `-40.0`)
+
+  ## Returns
+
+  - `[float()]` — gated PCM samples
+  - Falls back to `ZigBackend.audio_noise_gate/2` on WASM errors
+
+  ## Safety
+
+  Same crash-isolation guarantees as `dsp_fft/2`. The WASM module
+  (`burble_noise_gate.wasm`) is loaded on demand and stopped after each call.
+
+  ## Examples
+
+  ```elixir
+  gated = SNIFBackend.snif_noise_gate([0.001, 0.5, -0.001], -40.0)
+  #=> [0.0, 0.5, 0.0]  (samples below threshold zeroed)
+  ```
+  """
+  def snif_noise_gate(pcm, threshold_db) do
+    case call_snif_module(@snif_noise_gate_path, "noise_gate", [length(pcm), threshold_db] ++ pcm) do
+      {:ok, result} ->
+        result
+      {:error, reason} ->
+        Logger.warning("SNIF noise_gate failed: #{reason}, falling back to Zig NIF")
+        ZigBackend.audio_noise_gate(pcm, threshold_db)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # DSP kernel - echo cancellation with SNIF
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Applies acoustic echo cancellation using WebAssembly for crash isolation.
+
+  Attempts execution in the SNIF (WASM) sandbox first. Any WASM fault is caught
+  and converted to a `{:error, reason}` tuple; the function then falls back to
+  `ZigBackend.audio_echo_cancel/3` so the audio pipeline is never interrupted.
+
+  ## Parameters
+
+  - `capture`: List of floats — microphone signal (near-end)
+  - `reference`: List of floats — loudspeaker reference signal (far-end)
+  - `filter_length`: Integer — adaptive filter length in samples
+
+  ## Returns
+
+  - `[float()]` — echo-cancelled PCM samples
+  - Falls back to `ZigBackend.audio_echo_cancel/3` on WASM errors
+
+  ## Safety
+
+  Same crash-isolation guarantees as `dsp_fft/2`. Because echo cancellation is
+  stateless in this interface (filter coefficients are not persisted between
+  calls), the WASM module can be stopped after each invocation without losing
+  state.
+
+  ## Examples
+
+  ```elixir
+  cancelled = SNIFBackend.snif_echo_cancel(capture, reference, 128)
+  #=> [float()]  — capture with echo attenuated
+  ```
+  """
+  def snif_echo_cancel(capture, reference, filter_length) do
+    args = [length(capture), filter_length] ++ capture ++ reference
+    case call_snif_module(@snif_echo_cancel_path, "echo_cancel", args) do
+      {:ok, result} ->
+        result
+      {:error, reason} ->
+        Logger.warning("SNIF echo_cancel failed: #{reason}, falling back to Zig NIF")
+        ZigBackend.audio_echo_cancel(capture, reference, filter_length)
+    end
+  end
 
   # ---------------------------------------------------------------------------
   # SNIF Core - WASM interaction
@@ -403,8 +503,16 @@ defmodule Burble.Coprocessor.SNIFBackend do
   4. Test with simple functions like "still_alive" first
   """
   defp call_snif(function, args) do
+    call_snif_module(@snif_path, function, args)
+  end
+
+  # General SNIF execution primitive: load the WASM module at `path`, call
+  # `function` with `args`, then stop the WASM instance. Any error — including
+  # a missing WASM file, a WASM trap, or an Elixir exception — is returned as
+  # `{:error, reason}` so the caller can fall back gracefully.
+  defp call_snif_module(path, function, args) do
     try do
-      case Wasmex.start_link(%{bytes: File.read!(@snif_path)}) do
+      case Wasmex.start_link(%{bytes: File.read!(path)}) do
         {:ok, pid} ->
           result = Wasmex.call_function(pid, function, args)
           GenServer.stop(pid, :normal)

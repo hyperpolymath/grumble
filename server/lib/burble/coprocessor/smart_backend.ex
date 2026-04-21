@@ -12,8 +12,8 @@
 #
 #   Audio encode           → Zig  (5.7x faster:  14µs vs 81µs)
 #   Audio decode           → Zig  (4.7x faster:  21µs vs 99µs)
-#   Audio noise gate       → Zig  (1.2x faster:  27µs vs 32µs — marginal)
-#   Audio echo cancel      → Zig  (62.6x faster: 310µs vs 19.4ms — CRITICAL)
+#   Audio noise gate       → SNIF (crash-isolated) → Zig  (1.2x faster:  27µs vs 32µs — marginal)
+#   Audio echo cancel      → SNIF (crash-isolated) → Zig  (62.6x faster: 310µs vs 19.4ms — CRITICAL)
 #   Crypto encrypt/decrypt → Elixir (Erlang :crypto is native OpenSSL — 2µs)
 #   Crypto hash chain      → Elixir (same — 2µs)
 #   Crypto derive key      → Elixir (same — 5µs)
@@ -87,14 +87,28 @@ defmodule Burble.Coprocessor.SmartBackend do
 
   @impl true
   def audio_noise_gate(pcm, threshold_db) do
-    # 1.2x Zig advantage — marginal but consistent.
-    zig_or_elixir().audio_noise_gate(pcm, threshold_db)
+    # Route through SNIF (crash-isolated WASM) when the backend is available,
+    # otherwise fall back to Zig → Elixir as before.
+    # 1.2x Zig advantage — marginal but consistent; SNIF adds ~10-15% on top.
+    if SNIFBackend.available?() do
+      SNIFBackend.snif_noise_gate(pcm, threshold_db)
+    else
+      zig_or_elixir().audio_noise_gate(pcm, threshold_db)
+    end
   end
 
   @impl true
   def audio_echo_cancel(capture, reference, filter_length) do
+    # Route through SNIF (crash-isolated WASM) when the backend is available.
     # Normalise return type: Zig NIF wraps in {:ok, list}, Elixir returns plain list.
-    case zig_or_elixir().audio_echo_cancel(capture, reference, filter_length) do
+    raw =
+      if SNIFBackend.available?() do
+        SNIFBackend.snif_echo_cancel(capture, reference, filter_length)
+      else
+        zig_or_elixir().audio_echo_cancel(capture, reference, filter_length)
+      end
+
+    case raw do
       {:ok, result} when is_list(result) -> result
       result when is_list(result) -> result
       other -> other

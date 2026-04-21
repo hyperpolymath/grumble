@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// STUB — awaiting AffineScript compiler; ReScript version is authoritative until migration completes
+//
+// Signaling.affine — Relay and WebSocket signaling.
+
+@migrate_from("client/web/src/Signaling.res")
+
+open WebRTC
+
+// Relay — HTTP-based SDP exchange via a relay server.
+// SDP values (sdp) are affine: once sent they should not be reused.
+module Relay = {
+  // putOffer: sends an SDP offer to the relay. Consumes sdp.
+  fn putOffer: (relay_url: string, room_id: string, affine sdp: 'sdp) => Promise.t<unit>
+
+  // getOffer: fetches an SDP offer. Returns affine value (caller must consume).
+  fn getOffer: (relay_url: string, room_id: string) => Promise.t<affine 'sdp>
+
+  // putAnswer: sends an SDP answer to the relay. Consumes sdp.
+  fn putAnswer: (relay_url: string, room_id: string, affine sdp: 'sdp) => Promise.t<unit>
+
+  // getAnswer: fetches an SDP answer. Returns affine value (caller must consume).
+  fn getAnswer: (relay_url: string, room_id: string) => Promise.t<affine 'sdp>
+}
+
+// Phoenix — Phoenix Channel WebSocket transport.
+// socket is linear (must be connected and eventually disconnected).
+// channel is affine (joined once, not shared).
+module Phoenix = {
+  type linear socket
+  type affine channel
+
+  // createSocket: produces a linear socket that has not yet connected.
+  @new @module("phoenix")
+  external createSocket: (string, 'opts) => linear socket = "Socket"
+
+  // connectSocket: consumes the disconnected socket, returning it live.
+  // Modelled as a linear in/out transform.
+  @send external connectSocket: linear socket => linear socket = "connect"
+
+  // channel: borrows socket, returns affine channel (join once).
+  @send external channel: (socket, string, 'params) => affine channel = "channel"
+
+  // joinChannel: consumes channel token (join is a one-shot operation).
+  @send external joinChannel: linear channel => 'push = "join"
+
+  // onChannel: borrows channel to register a listener.
+  @send external onChannel: (channel, string, affine ('msg => unit)) => unit = "on"
+
+  // pushChannel: borrows channel to send a payload.
+  @send external pushChannel: (channel, string, affine 'payload) => 'push = "push"
+}

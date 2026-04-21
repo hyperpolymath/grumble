@@ -329,4 +329,38 @@ defmodule Burble.LLMTest do
       Supervisor.stop(sup_pid)
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Circuit breaker
+  # ---------------------------------------------------------------------------
+
+  describe "AnthropicProvider circuit breaker" do
+    setup do
+      Burble.LLM.AnthropicProvider.reset_circuit_breaker()
+      on_exit(fn -> Burble.LLM.AnthropicProvider.reset_circuit_breaker() end)
+    end
+
+    test "starts in :closed state" do
+      assert Burble.LLM.AnthropicProvider.circuit_breaker_status() == :closed
+    end
+
+    test "reset_circuit_breaker/0 resets to :closed" do
+      # Force failures by writing directly to ETS
+      ensure_cb_table()
+      :ets.insert(:burble_llm_circuit_breaker, {:failures, 10})
+      :ets.insert(:burble_llm_circuit_breaker, {:opened_at, System.monotonic_time(:millisecond)})
+
+      assert Burble.LLM.AnthropicProvider.circuit_breaker_status() == :open
+
+      Burble.LLM.AnthropicProvider.reset_circuit_breaker()
+      assert Burble.LLM.AnthropicProvider.circuit_breaker_status() == :closed
+    end
+
+    defp ensure_cb_table do
+      case :ets.info(:burble_llm_circuit_breaker) do
+        :undefined -> :ets.new(:burble_llm_circuit_breaker, [:set, :public, :named_table])
+        _ -> :ok
+      end
+    end
+  end
 end

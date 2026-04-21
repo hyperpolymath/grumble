@@ -7,6 +7,10 @@ defmodule Burble.LLM.AnthropicProvider do
 
   Calls the Claude Messages API via Erlang's built-in :httpc (no extra deps).
   Reads ANTHROPIC_API_KEY from environment. Falls back gracefully when unconfigured.
+
+  Includes a circuit breaker: after `@failure_threshold` consecutive failures the
+  circuit opens for `@open_duration_ms`, rejecting calls immediately. A single
+  probe is allowed after the open period (half-open); success closes the circuit.
   """
 
   require Logger
@@ -17,95 +21,176 @@ defmodule Burble.LLM.AnthropicProvider do
   @default_max_tokens 4096
   @request_timeout 60_000
 
-  # Ensure inets + ssl are started (idempotent).
+  # Circuit breaker config
+  @failure_threshold 5
+  @open_duration_ms 30_000
+  @cb_table :burble_llm_circuit_breaker
+
   defp ensure_httpc do
     :inets.start()
     :ssl.start()
     :ok
   end
 
-  @doc """
-  Process a synchronous LLM query. Returns `{:ok, text}` or `{:error, reason}`.
-  """
-  def process_query(user_id, prompt) do
-    ensure_httpc()
+  # ---------------------------------------------------------------------------
+  # Circuit breaker (ETS-based, no GenServer needed)
+  # ---------------------------------------------------------------------------
 
-    case api_key() do
-      nil ->
-        {:error, :api_key_not_configured}
+  defp ensure_cb_table do
+    case :ets.info(@cb_table) do
+      :undefined -> :ets.new(@cb_table, [:set, :public, :named_table]); :ok
+      _ -> :ok
+    end
+  end
 
-      key ->
-        body = Jason.encode!(%{
-          model: model(),
-          max_tokens: max_tokens(),
-          messages: [%{role: "user", content: prompt}],
-          system: system_prompt(user_id)
-        })
+  defp circuit_state do
+    ensure_cb_table()
+    failures = case :ets.lookup(@cb_table, :failures) do
+      [{_, n}] -> n
+      [] -> 0
+    end
+    opened_at = case :ets.lookup(@cb_table, :opened_at) do
+      [{_, t}] -> t
+      [] -> nil
+    end
+    {failures, opened_at}
+  end
 
-        headers = [
-          {~c"content-type", ~c"application/json"},
-          {~c"x-api-key", String.to_charlist(key)},
-          {~c"anthropic-version", String.to_charlist(@api_version)}
-        ]
+  defp record_success do
+    ensure_cb_table()
+    :ets.insert(@cb_table, {:failures, 0})
+    :ets.delete(@cb_table, :opened_at)
+  end
 
-        request = {@api_url, headers, ~c"application/json", String.to_charlist(body)}
+  defp record_failure do
+    ensure_cb_table()
+    new_count = case :ets.lookup(@cb_table, :failures) do
+      [{_, n}] -> n + 1
+      [] -> 1
+    end
+    :ets.insert(@cb_table, {:failures, new_count})
+    if new_count >= @failure_threshold do
+      :ets.insert(@cb_table, {:opened_at, System.monotonic_time(:millisecond)})
+      Logger.error("[LLM/CB] Circuit OPEN after #{new_count} consecutive failures")
+    end
+  end
 
-        case :httpc.request(:post, request, [timeout: @request_timeout, ssl: ssl_opts()], []) do
-          {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
-            parse_response(List.to_string(resp_body))
+  defp check_circuit do
+    case circuit_state() do
+      {failures, nil} when failures < @failure_threshold -> :closed
+      {_, opened_at} when is_integer(opened_at) ->
+        elapsed = System.monotonic_time(:millisecond) - opened_at
+        if elapsed >= @open_duration_ms, do: :half_open, else: :open
+      _ -> :closed
+    end
+  end
 
-          {:ok, {{_, status, _}, _resp_headers, resp_body}} ->
-            Logger.warning("[LLM/Anthropic] API returned #{status}: #{List.to_string(resp_body)}")
-            {:error, {:api_error, status}}
-
-          {:error, reason} ->
-            Logger.error("[LLM/Anthropic] HTTP request failed: #{inspect(reason)}")
-            {:error, {:http_error, reason}}
+  defp with_circuit_breaker(fun) do
+    case check_circuit() do
+      :open ->
+        {:error, :circuit_open}
+      state when state in [:closed, :half_open] ->
+        case fun.() do
+          {:ok, _} = ok ->
+            record_success()
+            ok
+          :ok ->
+            record_success()
+            :ok
+          {:error, _} = err ->
+            record_failure()
+            err
         end
     end
   end
 
-  @doc """
-  Stream an LLM query response. Calls `callback.(chunk_text)` for each content delta.
-  Returns `:ok` on completion or `{:error, reason}`.
-  """
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  def process_query(user_id, prompt) do
+    ensure_httpc()
+
+    case api_key() do
+      nil -> {:error, :api_key_not_configured}
+      key -> with_circuit_breaker(fn -> do_query(user_id, prompt, key) end)
+    end
+  end
+
   def stream_query(user_id, prompt, callback) do
     ensure_httpc()
 
     case api_key() do
-      nil ->
-        {:error, :api_key_not_configured}
-
-      key ->
-        body = Jason.encode!(%{
-          model: model(),
-          max_tokens: max_tokens(),
-          stream: true,
-          messages: [%{role: "user", content: prompt}],
-          system: system_prompt(user_id)
-        })
-
-        headers = [
-          {~c"content-type", ~c"application/json"},
-          {~c"x-api-key", String.to_charlist(key)},
-          {~c"anthropic-version", String.to_charlist(@api_version)}
-        ]
-
-        request = {@api_url, headers, ~c"application/json", String.to_charlist(body)}
-
-        case :httpc.request(:post, request, [timeout: @request_timeout, ssl: ssl_opts()], []) do
-          {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
-            parse_sse_stream(List.to_string(resp_body), callback)
-
-          {:ok, {{_, status, _}, _resp_headers, resp_body}} ->
-            Logger.warning("[LLM/Anthropic] Stream API returned #{status}")
-            {:error, {:api_error, status, List.to_string(resp_body)}}
-
-          {:error, reason} ->
-            Logger.error("[LLM/Anthropic] Stream HTTP request failed: #{inspect(reason)}")
-            {:error, {:http_error, reason}}
-        end
+      nil -> {:error, :api_key_not_configured}
+      key -> with_circuit_breaker(fn -> do_stream(user_id, prompt, callback, key) end)
     end
+  end
+
+  @doc "Current circuit breaker state: `:closed`, `:half_open`, or `:open`."
+  def circuit_breaker_status, do: check_circuit()
+
+  @doc "Manually reset the circuit breaker (e.g. after fixing an outage)."
+  def reset_circuit_breaker, do: record_success()
+
+  # ---------------------------------------------------------------------------
+  # HTTP calls
+  # ---------------------------------------------------------------------------
+
+  defp do_query(user_id, prompt, key) do
+    body = Jason.encode!(%{
+      model: model(),
+      max_tokens: max_tokens(),
+      messages: [%{role: "user", content: prompt}],
+      system: system_prompt(user_id)
+    })
+
+    request = {@api_url, auth_headers(key), ~c"application/json", String.to_charlist(body)}
+
+    case :httpc.request(:post, request, [timeout: @request_timeout, ssl: ssl_opts()], []) do
+      {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
+        parse_response(List.to_string(resp_body))
+
+      {:ok, {{_, status, _}, _resp_headers, resp_body}} ->
+        Logger.warning("[LLM/Anthropic] API returned #{status}: #{List.to_string(resp_body)}")
+        {:error, {:api_error, status}}
+
+      {:error, reason} ->
+        Logger.error("[LLM/Anthropic] HTTP request failed: #{inspect(reason)}")
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  defp do_stream(user_id, prompt, callback, key) do
+    body = Jason.encode!(%{
+      model: model(),
+      max_tokens: max_tokens(),
+      stream: true,
+      messages: [%{role: "user", content: prompt}],
+      system: system_prompt(user_id)
+    })
+
+    request = {@api_url, auth_headers(key), ~c"application/json", String.to_charlist(body)}
+
+    case :httpc.request(:post, request, [timeout: @request_timeout, ssl: ssl_opts()], []) do
+      {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
+        parse_sse_stream(List.to_string(resp_body), callback)
+
+      {:ok, {{_, status, _}, _resp_headers, resp_body}} ->
+        Logger.warning("[LLM/Anthropic] Stream API returned #{status}")
+        {:error, {:api_error, status, List.to_string(resp_body)}}
+
+      {:error, reason} ->
+        Logger.error("[LLM/Anthropic] Stream HTTP request failed: #{inspect(reason)}")
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  defp auth_headers(key) do
+    [
+      {~c"content-type", ~c"application/json"},
+      {~c"x-api-key", String.to_charlist(key)},
+      {~c"anthropic-version", String.to_charlist(@api_version)}
+    ]
   end
 
   # ---------------------------------------------------------------------------
@@ -153,13 +238,8 @@ defmodule Burble.LLM.AnthropicProvider do
   # Config helpers
   # ---------------------------------------------------------------------------
 
-  defp api_key do
-    System.get_env("ANTHROPIC_API_KEY")
-  end
-
-  defp model do
-    System.get_env("ANTHROPIC_MODEL") || @default_model
-  end
+  defp api_key, do: System.get_env("ANTHROPIC_API_KEY")
+  defp model, do: System.get_env("ANTHROPIC_MODEL") || @default_model
 
   defp max_tokens do
     case System.get_env("ANTHROPIC_MAX_TOKENS") do

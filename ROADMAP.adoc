@@ -34,7 +34,7 @@ Burble has cleared its foundational milestones. Test suite: 222+ Elixir tests + 
 
 * [x] **SDP Foundation:** Software-Defined Perimeter zero-trust logic with Zig FFI `nftables` bridge.
 * [x] **AWOL Routing:** Layline predictive routing (RTT/loss velocity) for seamless handover.
-* [ ] **LLM Service:** QUIC + TCP transport scaffold exists; **provider not wired, `parse_frame` has a bug, worker pool is no-op** (Phase 2b — secondary to P2P AI bridge).
+* [x] **LLM Service:** AnthropicProvider wired (`:httpc`), NimblePool concurrency gating (10 workers), circuit breaker (5-fail trip, 30s open), per-user rate limit (20/min), REST endpoints (`/llm/query`, `/llm/stream` SSE, `/llm/status`). Set `ANTHROPIC_API_KEY` to enable.
 * [x] **P2P AI Bridge:** Claude-to-Claude JSON data channel over WebRTC. Both send and receive legs working (receive-leg bug fixed 2026-04-16). Heartbeat, status UI, round-trip + ordering + reconnect tests. This is the **critical path** for pair-programming.
 * [x] **Groove Protocol:** Health Mesh inter-service probing and Feedback routing.
 * [x] **Formal Proofs:** `MediaPipeline.idr` (linear buffer consumption) and `WebRTCSignaling.idr` (JSEP transitions) implemented. **Avow attestation is data-type-only — no dependent-type enforcement at runtime yet** (Phase 1 target: hash-chain audit log).

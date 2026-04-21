@@ -52,6 +52,9 @@ defmodule Burble.Application do
       # Coprocessor pipeline supervisor — one pipeline per active peer
       {DynamicSupervisor, name: Burble.CoprocessorSupervisor, strategy: :one_for_one},
 
+      # In-memory chat message store (ETS-backed, per-room, ephemeral)
+      Burble.Chat.MessageStore,
+
       # Text channels (NNTPS-backed persistent threaded messages)
       Burble.Text.NNTPSBackend,
 
@@ -66,6 +69,11 @@ defmodule Burble.Application do
 
       # PTP precision timing (clock synchronisation for multi-node playout)
       Burble.Timing.PTP,
+
+      # RTP↔wall-clock correlator — receives sync points from every inbound RTP
+      # packet, maintains a 64-point sliding window, and provides rtp_to_wall /
+      # wall_to_rtp conversion + PPM drift estimation for Phase 4 playout alignment.
+      {Burble.Timing.ClockCorrelator, [name: Burble.Timing.ClockCorrelator, clock_rate: 48_000]},
 
       # Groove discovery endpoint (message queue for Gossamer/PanLL/etc.)
       # Serves GET /.well-known/groove with Burble capability manifest.

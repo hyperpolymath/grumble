@@ -219,7 +219,11 @@ defmodule Burble.Timing.Phc2sys do
   defp maybe_launch(true) do
     cond do
       not ptp_device_present?() ->
-        Logger.info("[Phc2sys] #{@ptp_device_path} not found; staying in :idle state (:ptp_absent)")
+        Logger.warning(
+          "[Phc2sys] auto_start requested but #{@ptp_device_path} does not exist on this host; " <>
+            "skipping phc2sys launch. Attach PTP hardware or disable auto_start."
+        )
+
         :ptp_absent
 
       phc2sys_running?() ->

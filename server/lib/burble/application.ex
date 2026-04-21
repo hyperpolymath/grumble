@@ -108,6 +108,10 @@ defmodule Burble.Application do
       # Note: LMDBPlayout instances are started dynamically per room, not here.
       # The RoomSupervisor above handles their lifecycle.
 
+      # Bolt listener — UDP port 7373. Receives magic "incoming call" packets.
+      # Degrades gracefully if the port is unavailable (logs warning, no crash).
+      Burble.Bolt.Listener,
+
       # Web endpoint (must be last — depends on PubSub and Presence)
       BurbleWeb.Endpoint
     ]

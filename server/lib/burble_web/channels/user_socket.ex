@@ -12,6 +12,7 @@ defmodule BurbleWeb.UserSocket do
 
   channel "room:*", BurbleWeb.RoomChannel
   channel "signaling:*", BurbleWeb.SignalingChannel
+  channel "bolt:*", BurbleWeb.BoltChannel
 
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) do

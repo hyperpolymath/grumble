@@ -36,8 +36,23 @@ defmodule Burble.Coprocessor.ZigBackend do
     nif_file = Application.app_dir(:burble, @nif_path)
 
     case :erlang.load_nif(String.to_charlist(nif_file), 0) do
-      :ok -> :ok
-      {:error, _reason} -> :ok
+      :ok ->
+        :logger.info(~c"[Coprocessor] Zig NIF loaded: SIMD-accelerated audio active", [])
+        :ok
+
+      {:error, {reason, detail}} ->
+        :logger.warning(
+          ~c"[Coprocessor] Zig NIF unavailable (~p: ~s) — falling back to Elixir for all audio",
+          [reason, detail]
+        )
+        :ok
+
+      {:error, reason} ->
+        :logger.warning(
+          ~c"[Coprocessor] Zig NIF unavailable (~p) — falling back to Elixir for all audio",
+          [reason]
+        )
+        :ok
     end
   rescue
     # App not started yet during compilation — skip.

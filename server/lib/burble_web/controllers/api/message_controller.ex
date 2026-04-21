@@ -25,6 +25,7 @@ defmodule BurbleWeb.API.MessageController do
   use Phoenix.Controller, formats: [:json]
 
   alias Burble.Text.NNTPSBackend
+  alias Burble.Chat.MessageStore
 
   @doc """
   Fetch recent messages for a room.
@@ -60,15 +61,25 @@ defmodule BurbleWeb.API.MessageController do
       |> min(200)
       |> max(1)
 
-    case NNTPSBackend.fetch_recent(room_id, limit) do
-      {:ok, articles} ->
-        messages = Enum.map(articles, &format_article/1)
-        json(conn, %{messages: messages})
+    # Return messages from the in-memory MessageStore (fast, real-time).
+    # Fall back to NNTPSBackend for historical messages beyond the in-memory window.
+    store_messages = MessageStore.get_messages(room_id, limit)
 
-      {:error, reason} ->
-        conn
-        |> put_status(500)
-        |> json(%{error: inspect(reason)})
+    if length(store_messages) >= limit do
+      messages = Enum.map(store_messages, &format_store_message/1)
+      json(conn, %{messages: messages})
+    else
+      # MessageStore didn't have enough — try NNTPSBackend for the full set.
+      case NNTPSBackend.fetch_recent(room_id, limit) do
+        {:ok, articles} ->
+          messages = Enum.map(articles, &format_article/1)
+          json(conn, %{messages: messages})
+
+        {:error, _reason} ->
+          # NNTPSBackend unavailable — return what the store has.
+          messages = Enum.map(store_messages, &format_store_message/1)
+          json(conn, %{messages: messages})
+      end
     end
   end
 
@@ -108,7 +119,18 @@ defmodule BurbleWeb.API.MessageController do
         |> json(%{error: "Message body exceeds 2000 byte limit"})
 
       true ->
-        # Build options for NNTPS post.
+        # Store in the in-memory MessageStore for real-time retrieval.
+        store_id = :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
+        timestamp = DateTime.utc_now()
+
+        MessageStore.store_message(room_id, %{
+          id: store_id,
+          from: user_id,
+          body: body,
+          timestamp: timestamp
+        })
+
+        # Also post to NNTPSBackend for persistence/threading.
         opts =
           if reply_to do
             [reply_to: reply_to]
@@ -122,15 +144,38 @@ defmodule BurbleWeb.API.MessageController do
             |> put_status(201)
             |> json(format_article(article))
 
-          {:error, reason} ->
+          {:error, _reason} ->
+            # NNTPSBackend unavailable — return a response based on the store entry.
             conn
-            |> put_status(500)
-            |> json(%{error: inspect(reason)})
+            |> put_status(201)
+            |> json(%{
+              message_id: store_id,
+              body: body,
+              display_name: display_name,
+              user_id: user_id,
+              sent_at: DateTime.to_iso8601(timestamp),
+              references: [],
+              is_pinned: false
+            })
         end
     end
   end
 
   # ── Private helpers ──
+
+  # Format a MessageStore entry into the same JSON shape as an NNTPS article.
+  @doc false
+  defp format_store_message(msg) do
+    %{
+      message_id: msg.id,
+      body: msg.body,
+      display_name: "Unknown",
+      user_id: msg.from,
+      sent_at: DateTime.to_iso8601(msg.timestamp),
+      references: [],
+      is_pinned: false
+    }
+  end
 
   # Format an NNTPS article into a JSON-friendly message map.
   @doc false

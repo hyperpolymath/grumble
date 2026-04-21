@@ -206,6 +206,97 @@ defmodule BurbleWeb.RoomChannel do
     end
   end
 
+  # ── Real-time text messaging (MessageStore-backed) ──
+  #
+  # These events use the "text:" namespace and are separate from the legacy
+  # "text" event (which routes through NNTPSBackend for NNTP threading).
+  #
+  # text:send   — broadcast a new message to all room participants
+  # text:typing — broadcast a transient typing indicator (throttled)
+  # text:history — fetch recent messages from the in-memory store
+
+  @typing_throttle_ms 2_000
+
+  @impl true
+  def handle_in("text:send", %{"body" => body}, socket)
+      when is_binary(body) and byte_size(body) > 0 and byte_size(body) <= 4096 do
+    user_id = socket.assigns.user_id
+    room_id = socket.assigns.room_id
+
+    role_perms = get_user_permissions(socket)
+
+    if Permissions.has_permission?(role_perms, :text) do
+      id = :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
+      timestamp = DateTime.utc_now()
+
+      msg = %{
+        id: id,
+        from: user_id,
+        body: body,
+        timestamp: timestamp
+      }
+
+      Burble.Chat.MessageStore.store_message(room_id, msg)
+
+      broadcast!(socket, "text:new", %{
+        id: id,
+        from: user_id,
+        body: body,
+        timestamp: DateTime.to_iso8601(timestamp)
+      })
+
+      {:reply, {:ok, %{id: id}}, socket}
+    else
+      {:reply, {:error, %{reason: "no_text_permission"}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("text:send", _params, socket) do
+    {:reply, {:error, %{reason: "invalid_text_payload"}}, socket}
+  end
+
+  @impl true
+  def handle_in("text:typing", _params, socket) do
+    user_id = socket.assigns.user_id
+    now = System.monotonic_time(:millisecond)
+    last_typing = socket.assigns[:last_typing_broadcast_ms] || 0
+
+    if now - last_typing >= @typing_throttle_ms do
+      broadcast_from!(socket, "text:typing", %{from: user_id})
+      socket = assign(socket, :last_typing_broadcast_ms, now)
+      {:noreply, socket}
+    else
+      # Throttled — ignore
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("text:history", %{"limit" => limit_raw}, socket)
+      when is_integer(limit_raw) and limit_raw > 0 do
+    room_id = socket.assigns.room_id
+    limit = min(limit_raw, 200)
+
+    messages =
+      Burble.Chat.MessageStore.get_messages(room_id, limit)
+      |> Enum.map(fn msg ->
+        %{
+          id: msg.id,
+          from: msg.from,
+          body: msg.body,
+          timestamp: DateTime.to_iso8601(msg.timestamp)
+        }
+      end)
+
+    {:reply, {:ok, %{messages: messages}}, socket}
+  end
+
+  @impl true
+  def handle_in("text:history", _params, socket) do
+    {:reply, {:error, %{reason: "invalid_history_params"}}, socket}
+  end
+
   # ── Whisper (directed audio) ──
 
   @impl true

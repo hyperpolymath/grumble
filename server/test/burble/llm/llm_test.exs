@@ -2,18 +2,43 @@
 #
 # Burble LLM module tests — covers core query processing, streaming, the
 # connection registry, transport endpoint management, protocol frame parsing,
-# and supervisor startup.
+# pool concurrency gating, and provider configuration.
 
 defmodule Burble.LLMTest do
-  # async: false because Registry uses :persistent_term (global state) and
-  # Transport registers under its module name as a named GenServer.
   use ExUnit.Case, async: false
+
+  # A simple test provider that echoes the prompt back.
+  defmodule TestProvider do
+    def process_query(_user_id, prompt) do
+      if String.contains?(prompt, "trigger_error") do
+        {:error, :simulated_error}
+      else
+        {:ok, "Echo: #{prompt}"}
+      end
+    end
+
+    def stream_query(_user_id, prompt, callback) do
+      if String.contains?(prompt, "trigger_error") do
+        {:error, :simulated_error}
+      else
+        for word <- String.split(prompt) do
+          callback.(word <> " ")
+        end
+        :ok
+      end
+    end
+  end
 
   # ---------------------------------------------------------------------------
   # LLM.process_query/2
   # ---------------------------------------------------------------------------
 
   describe "LLM.process_query/2" do
+    setup do
+      Burble.LLM.configure_provider(TestProvider)
+      on_exit(fn -> :persistent_term.erase({Burble.LLM, :provider}) end)
+    end
+
     test "returns {:ok, response_string} for a normal prompt" do
       assert {:ok, response} = Burble.LLM.process_query("user_1", "hello world")
       assert is_binary(response)
@@ -32,11 +57,28 @@ defmodule Burble.LLMTest do
     end
   end
 
+  describe "LLM.process_query/2 without provider" do
+    setup do
+      :persistent_term.erase({Burble.LLM, :provider})
+      :ok
+    end
+
+    test "returns {:error, :no_provider_configured} when no provider is set" do
+      assert {:error, :no_provider_configured} =
+               Burble.LLM.process_query("user_x", "hello")
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # LLM.stream_query/3
   # ---------------------------------------------------------------------------
 
   describe "LLM.stream_query/3" do
+    setup do
+      Burble.LLM.configure_provider(TestProvider)
+      on_exit(fn -> :persistent_term.erase({Burble.LLM, :provider}) end)
+    end
+
     test "calls the callback at least once with a binary chunk" do
       chunks = :ets.new(:test_chunks, [:bag, :public])
 
@@ -75,6 +117,22 @@ defmodule Burble.LLMTest do
   end
 
   # ---------------------------------------------------------------------------
+  # LLM.configure_provider/1
+  # ---------------------------------------------------------------------------
+
+  describe "LLM.configure_provider/1" do
+    test "sets the provider and subsequent queries use it" do
+      :persistent_term.erase({Burble.LLM, :provider})
+      assert {:error, :no_provider_configured} = Burble.LLM.process_query("u", "hi")
+
+      Burble.LLM.configure_provider(TestProvider)
+      assert {:ok, "Echo: hi"} = Burble.LLM.process_query("u", "hi")
+
+      :persistent_term.erase({Burble.LLM, :provider})
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # LLM.Registry
   # ---------------------------------------------------------------------------
 
@@ -98,7 +156,6 @@ defmodule Burble.LLMTest do
 
       :ok = Burble.LLM.Registry.register_connection(user_id, old_pid)
 
-      # Spawn a new process to get a different pid
       new_pid = spawn(fn -> :timer.sleep(100) end)
       :ok = Burble.LLM.Registry.register_connection(user_id, new_pid)
 
@@ -112,7 +169,6 @@ defmodule Burble.LLMTest do
 
   describe "LLM.Transport" do
     setup do
-      # Stop any existing instance so we can start fresh per test
       case Process.whereis(Burble.LLM.Transport) do
         nil -> :ok
         pid -> GenServer.stop(pid)
@@ -149,13 +205,9 @@ defmodule Burble.LLMTest do
     end
 
     test "report_failure/2 marks the endpoint offline and failover selects next" do
-      # Confirm primary is currently active
       assert {:ok, %{host: "primary.test"}} = Burble.LLM.Transport.get_active_endpoint()
 
-      # Report failure on the primary
       Burble.LLM.Transport.report_failure("primary.test", 8503)
-
-      # Allow the cast to be processed
       _ = :sys.get_state(Burble.LLM.Transport)
 
       assert {:ok, next} = Burble.LLM.Transport.get_active_endpoint()
@@ -165,32 +217,18 @@ defmodule Burble.LLMTest do
   end
 
   # ---------------------------------------------------------------------------
-  # LLM.Protocol.parse_frame/1 (via the public read_frame path, tested directly
-  # by reaching into the module's private helper through a wrapper approach)
+  # LLM.Protocol frame parsing
   # ---------------------------------------------------------------------------
-  #
-  # parse_frame/1 is private, but the module exposes its shape through
-  # read_frame/1.  We exercise the parsing logic directly by calling the
-  # module-level function we *can* reach, and by verifying documented
-  # behaviour for the bugfixed tuple→list destructure path.
 
   describe "LLM.Protocol frame parsing" do
-    # Helper: build the same full_data string that read_frame builds before
-    # handing to parse_frame/1 so we can test round-trip via an internal
-    # send to ourselves (loopback TCP socket).
-    #
-    # Because parse_frame/1 is private we verify behaviour indirectly through
-    # sending a known payload via a loopback socket and calling read_frame/1.
     setup do
       {:ok, listen} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])
       {:ok, port} = :inet.port(listen)
 
-      # Acceptor task
       parent = self()
       acceptor = Task.async(fn ->
         {:ok, server} = :gen_tcp.accept(listen, 1000)
         send(parent, {:server_socket, server})
-        # Keep socket open until caller is done
         receive do
           :close -> :gen_tcp.close(server)
         end
@@ -216,8 +254,6 @@ defmodule Burble.LLMTest do
     end
 
     test "parse_frame succeeds for a well-formed QUERY frame", %{client: client, server: server} do
-      # read_frame prepends @frame_header and appends @frame_footer, so we
-      # only need to send the inner payload (what would come from the wire).
       payload = "QUERY\nid: msg-001\nprompt: hello"
       :ok = :gen_tcp.send(client, payload)
 
@@ -228,13 +264,8 @@ defmodule Burble.LLMTest do
     end
 
     test "read_frame returns {:error, :closed} when the socket is closed", %{client: client, server: server} do
-      # Close the sending side before read_frame tries to recv — the server
-      # should see a :closed error from :gen_tcp.recv and propagate it.
       :gen_tcp.close(client)
-
-      # Give the OS a moment to propagate the FIN
       Process.sleep(20)
-
       assert {:error, :closed} = Burble.LLM.Protocol.read_frame(server)
     end
 
@@ -248,12 +279,37 @@ defmodule Burble.LLMTest do
   end
 
   # ---------------------------------------------------------------------------
+  # AnthropicProvider (unit, no real API calls)
+  # ---------------------------------------------------------------------------
+
+  describe "AnthropicProvider" do
+    test "returns {:error, :api_key_not_configured} without ANTHROPIC_API_KEY" do
+      old = System.get_env("ANTHROPIC_API_KEY")
+      System.delete_env("ANTHROPIC_API_KEY")
+
+      assert {:error, :api_key_not_configured} =
+               Burble.LLM.AnthropicProvider.process_query("u", "hello")
+
+      if old, do: System.put_env("ANTHROPIC_API_KEY", old)
+    end
+
+    test "stream_query returns {:error, :api_key_not_configured} without key" do
+      old = System.get_env("ANTHROPIC_API_KEY")
+      System.delete_env("ANTHROPIC_API_KEY")
+
+      assert {:error, :api_key_not_configured} =
+               Burble.LLM.AnthropicProvider.stream_query("u", "hello", fn _ -> :ok end)
+
+      if old, do: System.put_env("ANTHROPIC_API_KEY", old)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # LLM.Supervisor
   # ---------------------------------------------------------------------------
 
   describe "LLM.Supervisor" do
     test "start_link/1 starts the supervisor with children" do
-      # Stop any existing instance from the application startup
       case Process.whereis(Burble.LLM.Supervisor) do
         nil -> :ok
         pid -> Supervisor.stop(pid)
@@ -266,7 +322,6 @@ defmodule Burble.LLMTest do
       children = Supervisor.which_children(sup_pid)
       assert length(children) > 0
 
-      # Transport child must be present
       assert Enum.any?(children, fn {id, _pid, _type, _mods} ->
         id == Burble.LLM.Transport
       end)

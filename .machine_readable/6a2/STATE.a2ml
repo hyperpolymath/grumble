@@ -6,7 +6,7 @@
 [metadata]
 project = "burble"
 version = "1.1.0-pre"
-last-updated = "2026-04-16"
+last-updated = "2026-04-21"
 status = "active"
 
 [project-context]
@@ -26,7 +26,7 @@ milestones = [
   { name = "Phase 0 — Scrub baseline (V-lang removed, docs honest)", completion = 100, date = "2026-04-16" },
   { name = "Phase 1 — Audio dependable (Opus honest, comfort noise, REMB, Avow chain, echo-cancel ref, neural spectral-gate verified)", completion = 85 },
   { name = "Phase 2 — P2P AI channel dependable (burble-ai-bridge fixes, round-trip tests, docs) — CRITICAL PATH for family/pair-programming use case", completion = 80 },
-  { name = "Phase 2b — server-side Burble.LLM (provider, circuit breaker, fixed parse_frame, NimblePool wired) — SECONDARY, not required for family use case", completion = 40 },
+  { name = "Phase 2b — server-side Burble.LLM (provider, circuit breaker, fixed parse_frame, NimblePool wired) — SECONDARY, not required for family use case", completion = 80 },
   { name = "Phase 3 — RTSP + signaling + text + AffineScript client start", completion = 0 },
   { name = "Phase 4 — PTP hardware clock via Zig NIF, phc2sys supervisor, multi-node align", completion = 10 },
   { name = "Phase 5 — ReScript -> AffineScript completion", completion = 0 }
@@ -39,7 +39,7 @@ signaling-relay = { status = "consolidated", canonical = "signaling/relay.js", r
 
 [blockers-and-issues]
 doc-reality-drift = [
-  "ROADMAP.adoc claims LLM Service DONE — is a stub (provider missing, parse_frame broken)",
+  "ROADMAP.adoc LLM — AnthropicProvider wired, NimblePool gating, REST endpoint live. Remaining: circuit breaker, rate limiting per user, streaming SSE endpoint.",
   "ROADMAP.adoc claims Formal Proofs DONE — Avow attestation is data-type-only, no dependent-type enforcement",
   "README.adoc PTP claim sub-microsecond assumes hardware — code falls back to system clock without NIF"
 ]

@@ -57,6 +57,9 @@ if config_env() == :prod do
     enabled: true,
     primary_port: String.to_integer(System.get_env("LLM_PORT") || "8503"),
     fallback_port: String.to_integer(System.get_env("LLM_FALLBACK_PORT") || "8085"),
+    # Anthropic Claude API — set ANTHROPIC_API_KEY to enable server-side LLM.
+    anthropic_model: System.get_env("ANTHROPIC_MODEL") || "claude-sonnet-4-6",
+    anthropic_max_tokens: String.to_integer(System.get_env("ANTHROPIC_MAX_TOKENS") || "4096"),
     ipv6_preference: true,
     tls: [
       certfile: "priv/ssl/cert.pem",

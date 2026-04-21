@@ -21,15 +21,18 @@ defmodule Burble.LLM do
     :ok
   end
 
+  @pool_timeout 65_000
+
   @doc """
-  Process a synchronous LLM query.
+  Process a synchronous LLM query. Routes through the NimblePool to gate
+  concurrency — at most `pool_size` (default 10) requests run simultaneously.
   """
   def process_query(user_id, prompt) do
-    Logger.debug("[LLM] Processing query for #{user_id}: #{prompt}")
+    Logger.debug("[LLM] Processing query for #{user_id}")
     provider = :persistent_term.get({__MODULE__, :provider}, @provider)
 
     if provider do
-      provider.process_query(user_id, prompt)
+      checkout_and_run(fn -> provider.process_query(user_id, prompt) end)
     else
       Logger.warning("[LLM] process_query called but no provider is configured")
       {:error, :no_provider_configured}
@@ -37,17 +40,37 @@ defmodule Burble.LLM do
   end
 
   @doc """
-  Stream an LLM query response.
+  Stream an LLM query response. Routes through the NimblePool to gate
+  concurrency — the pool slot is held for the duration of the stream.
   """
   def stream_query(user_id, prompt, callback) do
-    Logger.debug("[LLM] Streaming query for #{user_id}: #{prompt}")
+    Logger.debug("[LLM] Streaming query for #{user_id}")
     provider = :persistent_term.get({__MODULE__, :provider}, @provider)
 
     if provider do
-      provider.stream_query(user_id, prompt, callback)
+      checkout_and_run(fn -> provider.stream_query(user_id, prompt, callback) end)
     else
       Logger.warning("[LLM] stream_query called but no provider is configured")
       {:error, :no_provider_configured}
+    end
+  end
+
+  # Checkout a worker from the pool, run the function, then check back in.
+  # If the pool is exhausted, the caller blocks until a slot opens or timeout.
+  defp checkout_and_run(fun) do
+    try do
+      NimblePool.checkout!(:llm_worker_pool, :checkout, fn _from, worker_state ->
+        result = fun.()
+        {result, worker_state}
+      end, @pool_timeout)
+    catch
+      :exit, {:timeout, _} ->
+        Logger.warning("[LLM] Pool checkout timeout — all workers busy")
+        {:error, :pool_exhausted}
+
+      :exit, reason ->
+        Logger.error("[LLM] Pool checkout failed: #{inspect(reason)}")
+        {:error, :pool_error}
     end
   end
 end

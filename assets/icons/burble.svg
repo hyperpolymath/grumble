@@ -1,7 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <circle cx="128" cy="128" r="120" fill="#0d1117" stroke="#3fb950" stroke-width="8"/>
-  <circle cx="128" cy="100" r="40" fill="none" stroke="#e6edf3" stroke-width="6"/>
-  <path d="M88 140 C88 180 168 180 168 140" fill="none" stroke="#e6edf3" stroke-width="6"/>
-  <line x1="128" y1="180" x2="128" y2="210" stroke="#e6edf3" stroke-width="6"/>
-  <line x1="108" y1="210" x2="148" y2="210" stroke="#e6edf3" stroke-width="6" stroke-linecap="round"/>
+  <defs>
+    <filter id="g" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="128" cy="128" r="100" fill="none" stroke="#3fb950" stroke-width="4" filter="url(#g)"/>
+  <!-- Left: noise in -->
+  <path d="M20,128 L26,116 L30,138 L34,112 L38,142 L42,110 L46,140 L50,114 L54,138 L58,108 L62,144 L66,106 L70,146" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8" filter="url(#g)"/>
+  <!-- Through circle: voice peaks -->
+  <path d="M70,146 L80,128 Q90,128 96,122 L108,108 Q112,100 116,112 L126,136 Q130,144 134,128 Q138,112 142,100 Q146,112 150,128 Q154,144 158,136 L168,112 Q172,100 176,108 L188,122 Q194,128 204,128" fill="none" stroke="#3fb950" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#g)"/>
+  <!-- Right: clean out -->
+  <path d="M204,128 L214,128 Q220,126 226,128 Q232,130 238,128" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.6" filter="url(#g)"/>
 </svg>

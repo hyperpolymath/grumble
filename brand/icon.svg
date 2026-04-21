@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="circle-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <radialGradient id="bg-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0a2010" />
+      <stop offset="100%" stop-color="#0d1117" />
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" fill="#0d1117" rx="64"/>
+  <circle cx="256" cy="256" r="200" fill="url(#bg-glow)" opacity="0.8"/>
+
+  <!-- Outer rings -->
+  <circle cx="256" cy="256" r="160" fill="none" stroke="#3fb950" stroke-width="1.5" opacity="0.15" filter="url(#circle-glow)"/>
+  <circle cx="256" cy="256" r="145" fill="none" stroke="#3fb950" stroke-width="1" opacity="0.1"/>
+
+  <!-- Main circle -->
+  <circle cx="256" cy="256" r="130" fill="none" stroke="#3fb950" stroke-width="3.5" opacity="0.9" filter="url(#circle-glow)"/>
+
+  <!-- LEFT: Noisy, chaotic, dense — raw audio coming in -->
+  <path d="
+    M 40,256
+    L 48,240 L 52,268 L 56,232 L 62,274 L 66,228
+    L 70,270 L 74,236 L 78,266 L 82,224
+    L 86,278 L 90,220 L 94,280 L 98,218
+    L 102,276 L 106,226 L 110,272 L 114,222
+    L 118,282 L 122,210 L 126,286
+  " fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" filter="url(#glow)"/>
+
+  <!-- THROUGH CIRCLE: Strong voice peaks (the signal Burble extracts) -->
+  <path d="
+    M 126,286
+    L 140,256
+    Q 156,256 168,244
+    L 184,224
+    Q 192,214 200,228
+    L 218,268
+    Q 226,282 234,262
+    L 244,220
+    Q 250,200 256,184
+    Q 262,200 268,220
+    L 278,262
+    Q 286,282 294,268
+    L 312,228
+    Q 320,214 328,224
+    L 344,244
+    Q 356,256 372,256
+  " fill="none" stroke="#3fb950" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <!-- RIGHT: Clean, gentle undulations — processed voice output -->
+  <path d="
+    M 372,256
+    L 386,256
+    Q 394,252 402,256 Q 410,260 418,256
+    Q 426,252 434,256 Q 442,260 450,256
+    Q 458,253 466,256 Q 472,258 478,256
+  " fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.7" filter="url(#glow)"/>
+</svg>

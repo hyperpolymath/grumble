@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="circle-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="text-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <radialGradient id="bg-glow" cx="50%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#0a2010" />
+      <stop offset="70%" stop-color="#0d1117" />
+      <stop offset="100%" stop-color="#080c10" />
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="#0d1117"/>
+  <rect width="1280" height="640" fill="url(#bg-glow)"/>
+
+  <!-- Concentric ring glows -->
+  <circle cx="640" cy="240" r="160" fill="none" stroke="#3fb950" stroke-width="1" opacity="0.1" filter="url(#circle-glow)"/>
+  <circle cx="640" cy="240" r="140" fill="none" stroke="#3fb950" stroke-width="0.8" opacity="0.08"/>
+
+  <!-- Main circle -->
+  <circle cx="640" cy="240" r="120" fill="none" stroke="#3fb950" stroke-width="3" opacity="0.9" filter="url(#circle-glow)"/>
+
+  <!-- LEFT: Dense chaotic noise — raw audio before Burble -->
+  <path d="
+    M 80,240
+    L 92,222 L 100,258 L 108,216 L 116,264 L 124,212
+    L 132,268 L 140,218 L 148,262 L 156,208
+    L 164,272 L 172,204 L 180,276 L 188,200
+    L 196,278 L 204,206 L 212,274 L 220,196
+    L 228,280 L 236,202 L 244,276 L 252,194
+    L 260,282 L 268,198 L 276,278 L 284,204
+    L 292,274 L 300,210 L 308,270 L 316,214
+    L 324,268 L 332,218 L 340,266 L 348,220
+    L 356,264 L 364,222 L 372,262 L 380,226
+    L 388,260 L 396,228 L 404,258 L 412,230
+    L 420,256 L 428,232 L 436,254 L 444,234
+    L 452,252 L 460,236 L 468,250 L 476,238
+    L 484,248 L 492,240 L 500,244 L 508,240
+    L 520,240
+  " fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.8" filter="url(#glow)"/>
+
+  <!-- THROUGH CIRCLE: The voice signal Burble extracts -->
+  <path d="
+    M 520,240
+    L 540,240
+    Q 560,240 572,232
+    L 588,216
+    Q 596,208 604,220
+    L 620,252
+    Q 628,266 636,248
+    L 640,200
+    Q 640,170 640,148
+    Q 640,170 640,200
+    L 644,248
+    Q 652,266 660,252
+    L 676,220
+    Q 684,208 692,216
+    L 708,232
+    Q 720,240 740,240
+  " fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <!-- RIGHT: Clean, gentle voice — processed output -->
+  <path d="
+    M 740,240
+    L 770,240
+    Q 784,236 798,240 Q 812,244 826,240
+    Q 840,236 854,240 Q 868,244 882,240
+    Q 896,237 910,240 Q 924,243 938,240
+    Q 952,238 966,240 Q 978,242 990,240
+    Q 1002,239 1014,240 Q 1026,241 1038,240
+    L 1200,240
+  " fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6" filter="url(#glow)"/>
+
+  <!-- "Burble" text -->
+  <text x="640" y="460" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="96" font-weight="300" fill="#e6edf3" letter-spacing="2" filter="url(#text-glow)">Burble</text>
+
+  <!-- Accent dot -->
+  <circle cx="640" cy="510" r="4" fill="#3fb950" opacity="0.6"/>
+  <line x1="540" y1="510" x2="630" y2="510" stroke="#3fb950" stroke-width="1" opacity="0.3"/>
+  <line x1="650" y1="510" x2="740" y2="510" stroke="#3fb950" stroke-width="1" opacity="0.3"/>
+</svg>

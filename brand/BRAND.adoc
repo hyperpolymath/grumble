@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= Burble Brand Pack
+:toc:
+
+== Mark
+
+The Burble mark is a green waveform pulse passing through a circle.
+It represents a voice signal — the moment sound becomes connection.
+
+|===
+| File | Use
+
+| `icon.svg` | Primary mark with dark background (rounded corners). README, docs, about screens.
+| `icon-square.svg` | Transparent background mark. Favicon, app icon, overlay on custom backgrounds.
+| `social-preview.svg` | GitHub / Open Graph social preview (1280x640). "Burble" wordmark + mark, no strapline.
+| `../assets/icons/burble.svg` | Favicon (256x256). Compact waveform circle, no text.
+|===
+
+== Colours
+
+[cols="1,1,2"]
+|===
+| Name | Hex | Use
+
+| Pulse Green | `#3fb950` | Primary brand colour. Waveform, active states, CTAs.
+| Background | `#0d1117` | Dark surfaces. GitHub-dark compatible.
+| Foreground | `#e6edf3` | Text on dark background.
+| Glow | `#0a2010` | Radial background glow behind mark.
+|===
+
+== Typography
+
+Wordmark uses the system font stack: `system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif` at weight 300 (light).
+
+No custom font is required. The wordmark is set in the SVG, not a separate font file.
+
+== Rules
+
+- The mark always includes the waveform line passing through the circle.
+- The strapline "Connection. First. Always." is used only in marketing materials, never in the product UI or repository assets.
+- The green must be `#3fb950` — do not approximate with other greens.
+- On light backgrounds, invert: dark green `#238636` circle and waveform on white/light grey.
+
+== Generating raster assets
+
+[source,shell]
+----
+# Requires Inkscape or rsvg-convert (librsvg)
+
+# Favicon (64x64 PNG)
+rsvg-convert -w 64 -h 64 icon-square.svg > favicon-64.png
+
+# App icon (512x512 PNG)
+rsvg-convert -w 512 -h 512 icon.svg > icon-512.png
+
+# Social preview (1280x640 PNG for GitHub)
+rsvg-convert -w 1280 -h 640 social-preview.svg > social-preview.png
+----

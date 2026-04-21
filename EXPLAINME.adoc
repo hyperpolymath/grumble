@@ -80,8 +80,26 @@ Persistent TCP connection to Murmur speaking Mumble's protobuf protocol
 (port 64738). Voice (Opus), presence, and text relay bidirectionally. Channel
 mapping is configurable.
 
-**What doesn't flow:** Mumble permissions (separate system), file transfers,
-positional audio (yet).
+**What flows now:**
+
+- Server-mute and suppress propagate to Burble — if a Mumble admin mutes a user,
+  they are muted in the Burble room too (`UserState` fields 7/9 → PubSub cast)
+- Kick and ban events are tracked (`UserRemove` → user removed from phantom list, Burble room notified)
+- `PermissionDenied` messages are handled gracefully rather than silently ignored
+- Positional audio coordinates (x, y, z) are extracted from incoming Mumble UDP voice
+  packets and broadcast on PubSub for Burble's spatial audio. Enable with
+  `positional_audio: true` when starting the bridge
+- Voice relay uses `UDPTunnel` (TCP) rather than a raw UDP stub, so it actually works
+
+**What still doesn't flow:**
+
+- Full ACL mirroring — Mumble has a 63-permission ACL tree per channel.
+  Burble syncs mute/suppress state but doesn't replicate the full ACL model.
+- File transfer — not a Mumble protocol feature. Mumble clients share files
+  via chat links; there is no `FileTransfer` protobuf message to bridge.
+- Positional audio coordinate systems differ per game engine — the x/y/z values
+  arrive in whatever space the sender's game uses. A configurable axis remapping
+  will be needed for cross-game accuracy.
 
 - Implementation: `server/lib/burble/bridges/mumble.ex`
 - Mumble protocol: https://mumble-protocol.readthedocs.io

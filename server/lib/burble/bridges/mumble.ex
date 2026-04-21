@@ -79,12 +79,18 @@ defmodule Burble.Bridges.Mumble do
 
   # Mumble message types (protobuf IDs).
   @msg_version 0
+  @msg_udp_tunnel 1
   @msg_authenticate 2
   @msg_ping 3
+  @msg_user_remove 8
   @msg_channel_state 7
   @msg_user_state 9
   @msg_text_message 11
   @msg_codec_version 21
+  @msg_permission_denied 24
+
+  # Mumble UDP codec type for Opus (upper 3 bits of type_target byte).
+  @opus_type 4
 
   @type bridge_config :: %{
           room_id: String.t(),
@@ -92,7 +98,8 @@ defmodule Burble.Bridges.Mumble do
           mumble_port: pos_integer(),
           mumble_channel: String.t(),
           bot_name: String.t(),
-          password: String.t() | nil
+          password: String.t() | nil,
+          positional_audio: boolean()
         }
 
   @type bridge_state :: %{
@@ -102,6 +109,7 @@ defmodule Burble.Bridges.Mumble do
           session_id: non_neg_integer() | nil,
           channel_id: non_neg_integer() | nil,
           mumble_users: map(),
+          user_positions: %{non_neg_integer() => {float(), float(), float()}},
           connected: boolean(),
           ping_ref: reference() | nil
         }
@@ -128,10 +136,22 @@ defmodule Burble.Bridges.Mumble do
     GenServer.cast(bridge, {:send_text, sender_name, message})
   end
 
-  @doc "Relay an audio frame from a Burble peer to Mumble."
-  @spec relay_to_mumble(GenServer.name(), binary()) :: :ok
-  def relay_to_mumble(bridge, opus_frame) do
-    GenServer.cast(bridge, {:relay_to_mumble, opus_frame})
+  @doc """
+  Relay an audio frame from a Burble peer to Mumble.
+
+  `position` is an optional `{x, y, z}` float tuple. When provided and the
+  bridge was started with `positional_audio: true`, coordinates are appended
+  to the voice packet so Mumble clients can spatialise the audio.
+  """
+  @spec relay_to_mumble(GenServer.name(), binary(), {float(), float(), float()} | nil) :: :ok
+  def relay_to_mumble(bridge, opus_frame, position \\ nil) do
+    GenServer.cast(bridge, {:relay_to_mumble, opus_frame, position})
+  end
+
+  @doc "Get the last known positional audio coordinates for a Mumble user."
+  @spec user_position(GenServer.name(), non_neg_integer()) :: {:ok, {float(), float(), float()}} | :unknown
+  def user_position(bridge, session_id) do
+    GenServer.call(bridge, {:user_position, session_id})
   end
 
   @doc "Stop the bridge and disconnect from Mumble."
@@ -157,7 +177,8 @@ defmodule Burble.Bridges.Mumble do
       mumble_port: Keyword.get(opts, :mumble_port, @default_port),
       mumble_channel: Keyword.get(opts, :mumble_channel, "Root"),
       bot_name: Keyword.get(opts, :bot_name, "Burble Bridge"),
-      password: Keyword.get(opts, :password)
+      password: Keyword.get(opts, :password),
+      positional_audio: Keyword.get(opts, :positional_audio, false)
     }
 
     state = %{
@@ -167,6 +188,7 @@ defmodule Burble.Bridges.Mumble do
       session_id: nil,
       channel_id: nil,
       mumble_users: %{},
+      user_positions: %{},
       connected: false,
       ping_ref: nil
     }
@@ -244,6 +266,14 @@ defmodule Burble.Bridges.Mumble do
   end
 
   @impl true
+  def handle_call({:user_position, session_id}, _from, state) do
+    case Map.fetch(state.user_positions, session_id) do
+      {:ok, pos} -> {:reply, {:ok, pos}, state}
+      :error -> {:reply, :unknown, state}
+    end
+  end
+
+  @impl true
   def handle_call(:status, _from, state) do
     status = %{
       room_id: state.config.room_id,
@@ -273,15 +303,18 @@ defmodule Burble.Bridges.Mumble do
   end
 
   @impl true
-  def handle_cast({:relay_to_mumble, opus_frame}, %{udp_socket: socket} = state) when not is_nil(socket) do
-    # Wrap Opus frame in Mumble UDP voice header and send.
-    _header = mumble_voice_header(state.session_id, opus_frame)
-    # UDP send would happen here in production.
+  def handle_cast({:relay_to_mumble, opus_frame, position}, %{tcp_socket: socket} = state) when not is_nil(socket) do
+    # Voice is tunneled over the TCP control channel via UDPTunnel (msg type 1).
+    # This avoids OCB-AES128 UDP encryption complexity and works through firewalls.
+    # Mumble servers support UDPTunnel for exactly this case.
+    pos = if state.config.positional_audio, do: position, else: nil
+    voice_packet = build_voice_packet(state.session_id, opus_frame, pos)
+    send_mumble_packet(socket, @msg_udp_tunnel, voice_packet)
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:relay_to_mumble, _}, state) do
+  def handle_cast({:relay_to_mumble, _opus_frame, _position}, state) do
     {:noreply, state}
   end
 
@@ -372,14 +405,25 @@ defmodule Burble.Bridges.Mumble do
     send_mumble_packet(socket, @msg_text_message, payload)
   end
 
-  # Construct a Mumble voice UDP header for an Opus frame.
-  defp mumble_voice_header(session_id, opus_frame) do
-    # Mumble voice header: type (3 bits) | target (5 bits), then varint session ID,
-    # then varint sequence number, then opus payload length + data.
-    type_target = 4 <<< 5  # Opus codec, normal talking.
-    <<type_target::8, encode_varint(session_id || 0)::binary,
-      encode_varint(0)::binary,
-      byte_size(opus_frame)::16-big, opus_frame::binary>>
+  # Build a Mumble voice UDP packet for tunneling over TCP.
+  # Optionally appends positional audio (x, y, z) as three little-endian float32s.
+  defp build_voice_packet(session_id, opus_frame, position) do
+    type_target = @opus_type <<< 5  # Opus codec, target = 0 (normal talking).
+    opus_len = byte_size(opus_frame)
+
+    base =
+      <<type_target::8>> <>
+      encode_varint(session_id || 0) <>
+      encode_varint(0) <>            # sequence number — simplified; production should increment
+      encode_varint(opus_len) <>
+      opus_frame
+
+    case position do
+      {x, y, z} ->
+        base <> <<x::little-float-32, y::little-float-32, z::little-float-32>>
+      _ ->
+        base
+    end
   end
 
   # Send a Mumble TCP packet: <<type::16-big, length::32-big, payload::binary>>.
@@ -393,16 +437,25 @@ defmodule Burble.Bridges.Mumble do
     state =
       case msg_type do
         @msg_user_state ->
-          # A user joined, left, or changed state.
           handle_user_state(payload, state)
 
+        @msg_user_remove ->
+          handle_user_remove(payload, state)
+
         @msg_channel_state ->
-          # Channel info received — find our target channel.
           handle_channel_state(payload, state)
 
         @msg_text_message ->
-          # Text message from Mumble — relay to Burble room.
           handle_text_from_mumble(payload, state)
+
+        @msg_udp_tunnel ->
+          # Incoming voice packet tunneled over TCP — parse Opus + optional position.
+          handle_udp_tunnel(payload, state)
+
+        @msg_permission_denied ->
+          reason = decode_string_field(payload, 2) || "unknown"
+          Logger.warning("[MumbleBridge] Permission denied by Mumble server: #{reason}")
+          state
 
         @msg_codec_version ->
           Logger.debug("[MumbleBridge] Codec version received")
@@ -425,23 +478,104 @@ defmodule Burble.Bridges.Mumble do
 
   defp handle_mumble_message(_data, state), do: state
 
-  # Handle UserState message — track Mumble users.
+  # Handle UserState message — track users and mirror mute/suppress to Burble.
+  #
+  # Mumble UserState protobuf fields used here:
+  #   1 = session (uint32)     — unique per-connection session ID
+  #   2 = name (string)        — display name
+  #   3 = channel_id (uint32)  — current channel
+  #   7 = mute (bool)          — server-muted by admin
+  #   8 = deaf (bool)          — server-deafened by admin
+  #   9 = suppress (bool)      — suppressed (no permission to speak in channel)
   defp handle_user_state(payload, state) do
-    # Simplified: extract session ID and name from protobuf.
-    # In production, use a proper protobuf decoder.
-    user = %{
-      session_id: decode_varint_field(payload, 1),
-      name: decode_string_field(payload, 2),
-      channel_id: decode_varint_field(payload, 3)
-    }
+    session_id = decode_varint_field(payload, 1)
 
-    if user.session_id do
-      Logger.debug("[MumbleBridge] User state: #{inspect(user)}")
-      mumble_users = Map.put(state.mumble_users, user.session_id, user)
+    unless session_id do
+      state
+    else
+      existing = Map.get(state.mumble_users, session_id, %{})
+
+      user = %{
+        session_id: session_id,
+        name:       decode_string_field(payload, 2) || existing[:name],
+        channel_id: decode_varint_field(payload, 3) || existing[:channel_id],
+        muted:      decode_bool_field(payload, 7, existing[:muted] || false),
+        deaf:       decode_bool_field(payload, 8, existing[:deaf] || false),
+        suppress:   decode_bool_field(payload, 9, existing[:suppress] || false)
+      }
+
+      Logger.debug("[MumbleBridge] UserState: #{user.name} mute=#{user.muted} suppress=#{user.suppress}")
+
+      # Mirror server-mute/suppress into the Burble room so the user can't
+      # be heard in Burble either when Mumble has silenced them.
+      if user.muted or user.suppress do
+        Phoenix.PubSub.broadcast(Burble.PubSub, "room:#{state.config.room_id}",
+          {:mumble_user_muted, %{session_id: session_id, name: user.name, muted: true}})
+      end
+
+      mumble_users = Map.put(state.mumble_users, session_id, user)
       %{state | mumble_users: mumble_users}
+    end
+  end
+
+  # Handle UserRemove — a Mumble user left or was kicked/banned.
+  defp handle_user_remove(payload, state) do
+    session_id = decode_varint_field(payload, 1)
+    actor      = decode_varint_field(payload, 2)
+    reason_str = decode_string_field(payload, 3)
+    banned     = decode_bool_field(payload, 4, false)
+
+    if session_id do
+      user = Map.get(state.mumble_users, session_id, %{name: "unknown"})
+      action = if banned, do: "banned", else: if(actor, do: "kicked", else: "left")
+      Logger.info("[MumbleBridge] #{user.name} #{action}#{if reason_str, do: ": #{reason_str}", else: ""}")
+
+      Phoenix.PubSub.broadcast(Burble.PubSub, "room:#{state.config.room_id}",
+        {:mumble_user_left, %{session_id: session_id, name: user.name, reason: action}})
+
+      %{state | mumble_users: Map.delete(state.mumble_users, session_id)}
     else
       state
     end
+  end
+
+  # Handle incoming voice tunnel — parse Opus frame and optional positional data.
+  #
+  # Mumble UDP voice packet layout (tunneled over TCP in UDPTunnel):
+  #   1 byte:  type_target  (bits 7-5 = codec type, bits 4-0 = target)
+  #   VarInt:  session ID   (whose voice this is)
+  #   VarInt:  sequence number
+  #   VarInt:  opus payload length (bit 13 set = last frame in talk burst)
+  #   N bytes: opus frame
+  #   [optional] 3 × float32-LE: x, y, z positional coordinates
+  defp handle_udp_tunnel(<<type_target::8, rest::binary>>, state) do
+    codec_type = type_target >>> 5
+
+    if codec_type == @opus_type do
+      {session_id, rest} = decode_varint_value(rest)
+      {_seq, rest} = decode_varint_value(rest)
+      {len_flags, rest} = decode_varint_value(rest)
+      opus_len = len_flags &&& 0x1FFF  # mask off the last-frame flag bit
+
+      case rest do
+        <<_opus::binary-size(opus_len), pos_rest::binary>> when byte_size(pos_rest) >= 12 ->
+          # Positional audio present — extract and store per-user coordinates.
+          <<x::little-float-32, y::little-float-32, z::little-float-32, _::binary>> = pos_rest
+          Logger.debug("[MumbleBridge] Positional audio: session=#{session_id} pos={#{x}, #{y}, #{z}}")
+
+          Phoenix.PubSub.broadcast(Burble.PubSub, "room:#{state.config.room_id}",
+            {:mumble_user_position, %{session_id: session_id, x: x, y: y, z: z}})
+
+          %{state | user_positions: Map.put(state.user_positions, session_id, {x, y, z})}
+
+        _ ->
+          state
+      end
+    else
+      state
+    end
+  rescue
+    _ -> state
   end
 
   # Handle ChannelState — find our target channel ID.
@@ -498,6 +632,16 @@ defmodule Burble.Bridges.Mumble do
   defp encode_varint(value) when value < 128, do: <<value::8>>
   defp encode_varint(value) do
     <<1::1, value &&& 0x7F::7>> <> encode_varint(value >>> 7)
+  end
+
+  # Decode a bool field (wire type 0 varint: 0 = false, 1 = true).
+  # Returns `default` if the field is absent.
+  defp decode_bool_field(payload, target_field, default) do
+    case decode_varint_field(payload, target_field) do
+      nil -> default
+      0   -> false
+      _   -> true
+    end
   end
 
   # Decode a varint field from protobuf payload (simplified, finds first match).

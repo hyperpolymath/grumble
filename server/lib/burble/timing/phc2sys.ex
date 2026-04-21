@@ -131,6 +131,10 @@ defmodule Burble.Timing.Phc2sys do
 
   @impl true
   def init(opts) do
+    # Trap exits so that {:EXIT, port, reason} messages are delivered to
+    # handle_info/2 when the phc2sys port dies unexpectedly.
+    Process.flag(:trap_exit, true)
+
     effective_auto_start = resolve_auto_start(opts)
 
     state = maybe_launch(effective_auto_start)
@@ -183,6 +187,7 @@ defmodule Burble.Timing.Phc2sys do
     :ok
   end
 
+  @impl true
   def terminate(_reason, _state), do: :ok
 
   # ── Private helpers ────────────────────────────────────────────────────────

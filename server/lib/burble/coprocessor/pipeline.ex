@@ -140,6 +140,10 @@ defmodule Burble.Coprocessor.Pipeline do
       # Silence counter: frames since last non-nil inbound. Drives comfort
       # noise injection so peers don't hear dead air when a speaker pauses.
       silence_frames: 0,
+      # Last RTP timestamp received from the network — populated via
+      # record_rtp_timestamp/2 when peer.ex extracts it from incoming packets.
+      # Used by Phase 4 PTP correlation to map RTP clock → wall clock.
+      last_rtp_ts: 0,
       # Metrics
       frames_processed: 0,
       frames_dropped: 0,
@@ -295,6 +299,27 @@ defmodule Burble.Coprocessor.Pipeline do
     }
 
     {:reply, {:ok, health}, state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # RTP timestamp tracking (Phase 4 PTP precursor)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Record the latest RTP timestamp received from the network.
+
+  Called by `Burble.Media.Peer` each time an RTP packet arrives so the
+  pipeline knows the sender's RTP clock position. Phase 4 will correlate
+  this against the PTP hardware clock to derive end-to-end latency and
+  enable multi-node playout alignment.
+  """
+  def record_rtp_timestamp(pipeline, rtp_ts) do
+    GenServer.cast(pipeline, {:rtp_timestamp, rtp_ts})
+  end
+
+  @impl true
+  def handle_cast({:rtp_timestamp, rtp_ts}, state) do
+    {:noreply, %{state | last_rtp_ts: rtp_ts}}
   end
 
   # ---------------------------------------------------------------------------

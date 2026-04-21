@@ -128,7 +128,10 @@ defmodule Burble.Media.Peer do
       recv_track_id: nil,
       outbound_tracks: outbound_tracks,
       pending_peers: [],
-      negotiating: false
+      negotiating: false,
+      # Pipeline pid for this peer — looked up lazily on first RTP packet.
+      # Used to forward RTP timestamps for Phase 4 PTP correlation.
+      pipeline_pid: nil
     }
 
     # Generate initial offer.
@@ -193,10 +196,19 @@ defmodule Burble.Media.Peer do
   @impl true
   def handle_info({:ex_webrtc, pc, {:rtp, track_id, _rid, packet}}, %{pc: pc} = state) do
     # Received RTP from this peer — forward to all other peers in the room.
-    if track_id == state.recv_track_id do
-      # Tell the Engine to distribute this packet.
-      Burble.Media.Engine.distribute_rtp(state.room_id, state.peer_id, packet)
-    end
+    state =
+      if track_id == state.recv_track_id do
+        Burble.Media.Engine.distribute_rtp(state.room_id, state.peer_id, packet)
+        # Propagate RTP timestamp to the pipeline for Phase 4 PTP correlation.
+        # Resolve pipeline pid lazily so we don't fail if pipeline hasn't started.
+        pipeline_pid = state.pipeline_pid || resolve_pipeline(state.peer_id)
+        if pipeline_pid do
+          Burble.Coprocessor.Pipeline.record_rtp_timestamp(pipeline_pid, packet.timestamp)
+        end
+        %{state | pipeline_pid: pipeline_pid}
+      else
+        state
+      end
 
     {:noreply, state}
   end
@@ -312,6 +324,15 @@ defmodule Burble.Media.Peer do
 
   defp via(peer_id) do
     {:via, Registry, {Burble.PeerRegistry, peer_id}}
+  end
+
+  # Look up the pipeline GenServer for this peer via the CoprocessorRegistry.
+  # Returns the pid if found, nil if not yet started (non-fatal).
+  defp resolve_pipeline(peer_id) do
+    case Registry.lookup(Burble.CoprocessorRegistry, peer_id) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
   end
 
   defp add_sendonly_track(pc) do

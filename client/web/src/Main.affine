@@ -23,9 +23,10 @@ Console.log2("[Burble] Auth:", AuthState.displayName(app.auth))
 @val @scope("window")
 external addPopStateListener: (@as("popstate") _, affine ('a => unit)) => unit = "addEventListener"
 
+// The closure borrows app via &app (shared borrow) — does not consume it.
 addPopStateListener(_ => {
   let path: string = %raw(`window.location.pathname`)
-  App.handleUrlChange(app, path)
+  App.handleUrlChange(&app, path)
 })
 
 // Set initial page title (borrows app.currentRoute).

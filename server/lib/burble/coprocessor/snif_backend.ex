@@ -517,10 +517,10 @@ defmodule Burble.Coprocessor.SNIFBackend do
           result = Wasmex.call_function(pid, function, args)
           GenServer.stop(pid, :normal)
           result
-        {:error, reason} -> {:error, :wasm_load_failed, detail: reason}
+        {:error, reason} -> {:error, {:wasm_load_failed, reason}}
       end
     rescue
-      error -> {:error, :snif_exception, detail: error}
+      error -> {:error, {:snif_exception, error}}
     end
   end
 

@@ -68,6 +68,9 @@ defmodule BurbleWeb.Router do
     get "/diagnostics/self-test", DiagnosticsController, :self_test
     get "/diagnostics/self-test/:mode", DiagnosticsController, :self_test
 
+    # LLM status (public — checks if provider is configured)
+    get "/llm/status", LLMController, :status
+
     # Instant connect — join via link/QR/code (public, no auth required)
     get "/join/:code", InstantConnectController, :lookup
     post "/join/:code", InstantConnectController, :redeem
@@ -107,6 +110,10 @@ defmodule BurbleWeb.Router do
     post "/rooms/:id/mute", ModerationController, :mute
     post "/rooms/:id/move", ModerationController, :move
     post "/servers/:id/ban", ModerationController, :ban
+
+    # LLM queries (authenticated — either side of the P2P bridge can call)
+    post "/llm/query", LLMController, :query
+    post "/llm/stream", LLMController, :stream
 
     # Invites (creation requires auth)
     post "/servers/:server_id/invites", InviteController, :create

@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// Model.affine — State types for Burble Admin TEA architecture.
+//
+// AffineScript migration of Model.res
+
+/// Model — Application state for the Burble Admin panel.
+///
+/// Holds the complete UI state including server connection status, room
+/// listings, voice statistics, and Gossamer capability tokens. Capability
+/// tokens are the central security mechanism: every privileged operation
+/// (network calls, notifications) requires a valid token obtained from
+/// the Gossamer runtime.
+
+/// Connection status to the Burble Elixir backend.
+type serverStatus =
+  | /// Successfully connected and receiving heartbeats.
+    Connected
+  | /// No connection — server unreachable or not started.
+    Disconnected
+  | /// Connection attempt in progress.
+    Connecting
+
+/// A voice room on the Burble server.
+type room = {
+  /// Unique room identifier (UUID from the Elixir backend).
+  id: string,
+  /// Human-readable room name.
+  name: string,
+  /// Current number of connected users.
+  users: int,
+  /// Whether the room is actively recording audio.
+  recording: bool,
+}
+
+/// Capability token status for Gossamer security.
+/// Each capability must be explicitly granted by the runtime before use.
+type capabilityStatus =
+  | /// Not yet requested from the runtime.
+    NotRequested
+  | /// Request sent, awaiting runtime grant.
+    Pending
+  | /// Granted with a token. The float is the token value.
+    Granted(float)
+  | /// Runtime denied the capability request.
+    Denied
+
+/// Complete application state.
+type model = {
+  /// Current server connection status.
+  status: serverStatus,
+  /// All rooms known to the admin panel.
+  rooms: array<room>,
+  /// Currently selected room ID for detail view.
+  selectedRoom: option<string>,
+  /// Raw JSON string of server configuration.
+  serverConfig: option<string>,
+  /// Raw JSON string of WebRTC voice statistics.
+  voiceStats: option<string>,
+  /// Network capability token — required for ALL API calls.
+  networkCap: capabilityStatus,
+  /// Notification capability token — required for call alerts.
+  notifyCap: capabilityStatus,
+  /// Error message to display in the UI, if any.
+  error: option<string>,
+  /// Whether the capability grant panel is visible.
+  showCapPanel: bool,
+}
+
+/// Initial application state. Starts with no capabilities granted,
+/// forcing the user to explicitly authorise network and notification
+/// access through the Gossamer capability token system.
+let initial: model = {
+  status: Disconnected,
+  rooms: [],
+  selectedRoom: None,
+  serverConfig: None,
+  voiceStats: None,
+  networkCap: NotRequested,
+  notifyCap: NotRequested,
+  error: None,
+  showCapPanel: true,
+}

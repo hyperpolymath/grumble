@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// Capabilities.affine — Gossamer capability token management.
+//
+// AffineScript migration of Capabilities.res
+
+/// Capabilities — Gossamer capability token system showcase.
+///
+/// This module demonstrates Gossamer's killer feature: fine-grained
+/// capability tokens. Unlike Tauri's coarse permission model, Gossamer
+/// requires apps to explicitly request each capability at runtime, and
+/// the runtime issues a time-limited token that must accompany every
+/// privileged IPC call.
+///
+/// Capability kinds (from gossamer.conf.json):
+///   1 = network     — Required for all Burble API calls
+///   2 = filesystem   — Not used by Burble Admin
+///   3 = shell        — Not used by Burble Admin
+///   4 = notification — Required for call/room alerts
+///   5 = clipboard    — Not used by Burble Admin
+///   6 = tray         — Required for system tray presence
+///
+/// Flow:
+///   1. App starts with NO capabilities (sandbox by default)
+///   2. User sees the capability grant panel
+///   3. User clicks "Grant Network" → Gossamer shows consent dialog
+///   4. Runtime returns a token (float) valid for TTL seconds
+///   5. All subsequent API calls include the token in the IPC payload
+///   6. Token expires → app must re-request or operations fail
+///
+/// This is fundamentally different from Tauri where permissions are
+/// declared at build time and granted wholesale at install time.
+
+/// Capability kind identifiers matching the Gossamer runtime's internal enum.
+/// These map to the `kind` field in `__gossamer_cap_grant` requests.
+module Kind = {
+  /// Network access — HTTP/WebSocket to the Burble Elixir server.
+  let network = 1
+
+  /// Desktop notification — call alerts, room events.
+  let notification = 4
+
+  /// System tray — persistent background presence.
+  let tray = 6
+
+  /// Human-readable name for a capability kind.
+  let toString = (kind: int): string => {
+    switch kind {
+    | 1 => "network"
+    | 4 => "notification"
+    | 6 => "tray"
+    | k => `unknown(${Int.toString(k)})`
+    }
+  }
+
+  /// Description of why Burble Admin needs this capability.
+  let description = (kind: int): string => {
+    switch kind {
+    | 1 => "Connect to the Burble voice server to manage rooms, users, and voice channels."
+    | 4 => "Show desktop alerts when users join rooms, calls start, or server issues occur."
+    | 6 => "Keep Burble Admin running in the system tray for quick access to server status."
+    | _ => "Unknown capability."
+    }
+  }
+}
+
+/// Request a capability token from the Gossamer runtime.
+///
+/// This triggers Gossamer's consent dialog. The user must approve the
+/// request before the runtime issues a token. Returns a promise that
+/// resolves to the token value (float) on success.
+///
+/// @param kind - The capability kind (use Kind.network, Kind.notification, etc.)
+let requestCapability = (kind: int): promise<float> => {
+  RuntimeBridge.invoke("__gossamer_cap_grant", {"kind": kind})
+}
+
+/// Request network capability — needed for ALL Burble API calls.
+///
+/// Without this token, no HTTP requests can be made to the Elixir backend.
+/// This is the first capability users should grant.
+let requestNetworkAccess = (): promise<float> => {
+  requestCapability(Kind.network)
+}
+
+/// Request notification capability — needed for call/room alerts.
+///
+/// Desktop notifications inform the admin of user joins, server events,
+/// and recording status changes.
+let requestNotificationAccess = (): promise<float> => {
+  requestCapability(Kind.notification)
+}
+
+/// Request tray capability — needed for system tray icon.
+///
+/// Tray presence lets the admin monitor server status without keeping
+/// the full window open.
+let requestTrayAccess = (): promise<float> => {
+  requestCapability(Kind.tray)
+}
+
+/// Revoke a previously granted capability.
+///
+/// This is the counterpart to requestCapability. After revocation, any
+/// IPC calls using the old token will fail. The app should update its
+/// UI to reflect the reduced permissions.
+///
+/// @param kind - The capability kind to revoke
+let revokeCapability = (kind: int): promise<unit> => {
+  RuntimeBridge.invoke("__gossamer_cap_revoke", {"kind": kind})
+}
+
+/// Check whether a token is still valid.
+///
+/// Tokens expire after the TTL defined in gossamer.conf.json (default:
+/// 3600 seconds). This lets the app proactively check and re-request
+/// before a critical operation fails.
+///
+/// @param token - The capability token to validate
+let validateToken = (token: float): promise<bool> => {
+  RuntimeBridge.invoke("__gossamer_cap_validate", {"token": token})
+}
+
+/// Send a desktop notification (requires notification capability).
+///
+/// @param title - Notification title
+/// @param body  - Notification body text
+/// @param token - Valid notification capability token
+let notify = (title: string, body: string, token: float): promise<unit> => {
+  RuntimeBridge.invokeWithToken(
+    "__gossamer_notify",
+    {"title": title, "body": body},
+    token,
+  )
+}

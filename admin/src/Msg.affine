@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// Msg.affine — Message types for Burble Admin TEA architecture.
+//
+// AffineScript migration of Msg.res
+
+/// Msg — Message type for the Burble Admin TEA architecture.
+///
+/// Every user interaction and async result flows through this type.
+/// Messages are dispatched by the view and processed by the update
+/// function in App.res.
+
+/// All messages that can occur in the Burble Admin panel.
+type msg =
+  // --- Server health ---
+  | /// User clicked "Check Health" or auto-poll triggered.
+    CheckHealth
+  | /// Health check response arrived from the Elixir backend.
+    HealthResult(result<string, string>)
+
+  // --- Room management ---
+  | /// Request the full room list from the server.
+    LoadRooms
+  | /// Room list response arrived.
+    RoomsLoaded(result<string, string>)
+  | /// User submitted the "create room" form.
+    CreateRoom(string)
+  | /// Room creation response arrived.
+    RoomCreated(result<string, string>)
+  | /// User selected a room in the sidebar.
+    SelectRoom(string)
+  | /// User clicked "kick user" for a participant.
+    KickUser(string, string)
+  | /// Kick response arrived. Contains room ID and result.
+    UserKicked(result<string, string>)
+
+  // --- Voice / recording ---
+  | /// Request WebRTC voice statistics from the server.
+    LoadVoiceStats
+  | /// Voice stats response arrived.
+    VoiceStatsLoaded(result<string, string>)
+  | /// User toggled recording for a room.
+    ToggleRecording(string)
+  | /// Recording toggle response arrived.
+    RecordingToggled(result<string, string>)
+
+  // --- Server configuration ---
+  | /// Request the server configuration.
+    LoadServerConfig
+  | /// Server config response arrived.
+    ServerConfigLoaded(result<string, string>)
+  | /// User submitted updated server configuration.
+    UpdateServerConfig(string)
+  | /// Config update response arrived.
+    ServerConfigUpdated(result<string, string>)
+
+  // --- Gossamer capability tokens ---
+  | /// User clicked "Grant" on a capability in the cap panel.
+    RequestCapability(string)
+  | /// Gossamer runtime granted a capability token.
+    CapGranted(string, float)
+  | /// Gossamer runtime revoked a capability token.
+    CapRevoked(string)
+  | /// User dismissed the capability panel.
+    DismissCapPanel
+  | /// User reopened the capability panel.
+    ShowCapPanel
+
+  // --- UI ---
+  | /// Clear the current error message.
+    ClearError
+  | /// No-op message (used for commands that have no followup).
+    NoOp

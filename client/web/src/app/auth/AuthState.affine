@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// AuthState.affine — Client-side authentication state.
+//
+// AffineScript migration of AuthState.res
+
+/// Authentication status.
+type rec authStatus =
+  | /// Not logged in.
+  Anonymous
+  | /// Guest session (limited permissions, no persistence).
+  Guest(guestInfo)
+  | /// Full authenticated session.
+  Authenticated(userInfo)
+
+/// Guest session info.
+and guestInfo = {
+  guestId: string,
+  guestName: string,
+}
+
+/// Authenticated user info.
+and userInfo = {
+  userId: string,
+  email: string,
+  userName: string,
+  isAdmin: bool,
+  token: string,
+}
+
+/// Auth state.
+type t = {
+  mutable status: authStatus,
+  mutable pendingMagicLink: bool,
+}
+
+/// Create initial (anonymous) auth state.
+let make = (): t => {
+  status: Anonymous,
+  pendingMagicLink: false,
+}
+
+/// Whether the user is logged in (guest or full account).
+let isLoggedIn = (state: t): bool =>
+  switch state.status {
+  | Anonymous => false
+  | Guest(_) | Authenticated(_) => true
+  }
+
+/// Whether the user is a guest.
+let isGuest = (state: t): bool =>
+  switch state.status {
+  | Guest(_) => true
+  | _ => false
+  }
+
+/// Whether the user has admin privileges.
+let isAdmin = (state: t): bool =>
+  switch state.status {
+  | Authenticated({isAdmin: true}) => true
+  | _ => false
+  }
+
+/// Get the display name (or "Anonymous").
+let displayName = (state: t): string =>
+  switch state.status {
+  | Anonymous => "Anonymous"
+  | Guest({guestName}) => guestName
+  | Authenticated({userName}) => userName
+  }
+
+/// Get the user ID (or empty string).
+let userId = (state: t): string =>
+  switch state.status {
+  | Anonymous => ""
+  | Guest({guestId}) => guestId
+  | Authenticated({userId}) => userId
+  }
+
+/// Get the auth token (for WebSocket connection).
+let token = (state: t): option<string> =>
+  switch state.status {
+  | Authenticated({token}) => Some(token)
+  | _ => None
+  }
+
+/// Set authenticated state from login response.
+let setAuthenticated = (state: t, info: userInfo): unit => {
+  state.status = Authenticated(info)
+  state.pendingMagicLink = false
+}
+
+/// Set guest state.
+let setGuest = (state: t, info: guestInfo): unit => {
+  state.status = Guest(info)
+}
+
+/// Log out — return to anonymous.
+let logout = (state: t): unit => {
+  state.status = Anonymous
+  state.pendingMagicLink = false
+}

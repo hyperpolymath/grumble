@@ -1,0 +1,430 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// TextChat.affine — Text chat component for Burble rooms.
+//
+// AffineScript migration of TextChat.res
+
+/// A single text message (mirrors the NNTPS article structure).
+type message = {
+  messageId: string,
+  body: string,
+  displayName: string,
+  userId: string,
+  sentAt: string,
+  references: array<string>,
+  isPinned: bool,
+}
+
+/// Text chat state.
+type chatState = {
+  mutable messages: array<message>,
+  mutable pinnedMessages: array<message>,
+  mutable isLoading: bool,
+  mutable hasMore: bool,
+  mutable replyTo: option<string>,
+  mutable inputValue: string,
+  roomId: string,
+}
+
+// ---------------------------------------------------------------------------
+// External bindings
+// ---------------------------------------------------------------------------
+
+/// Fetch API.
+@val external fetch: (string, {..}) => promise<{..}> = "fetch"
+
+/// DOM scroll helper.
+@val external setTimeout: (unit => unit, int) => float = "setTimeout"
+
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
+
+/// Create a new chat state for a room.
+let make = (~roomId: string): chatState => {
+  messages: [],
+  pinnedMessages: [],
+  isLoading: false,
+  hasMore: true,
+  replyTo: None,
+  inputValue: "",
+  roomId,
+}
+
+// ---------------------------------------------------------------------------
+// API client — fetches messages from the Burble REST API
+// ---------------------------------------------------------------------------
+
+/// Fetch recent messages for a room from the server.
+///
+/// GET /api/v1/rooms/:id/messages?limit=50&before=<message_id>
+///
+/// Returns parsed message array or an error string.
+let fetchMessages = async (
+  state: chatState,
+  ~token: string,
+  ~limit: int=50,
+  ~before: option<string>=None,
+): result<array<message>, string> => {
+  let baseUrl = `/api/v1/rooms/${state.roomId}/messages?limit=${Int.toString(limit)}`
+  let url = switch before {
+  | Some(id) => `${baseUrl}&before=${id}`
+  | None => baseUrl
+  }
+
+  try {
+    let response = await fetch(url, {
+      "method": "GET",
+      "headers": {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    })
+
+    let json: {..} = await response["json"]()
+    let rawMessages: array<{..}> = json["messages"]
+
+    let parsed = rawMessages->Array.map(raw => {
+      let refs: array<string> = switch raw["references"] {
+      | r => r
+      }
+
+      {
+        messageId: raw["message_id"],
+        body: raw["body"],
+        displayName: raw["display_name"],
+        userId: raw["user_id"],
+        sentAt: raw["sent_at"],
+        references: refs,
+        isPinned: raw["is_pinned"] == true,
+      }
+    })
+
+    Ok(parsed)
+  } catch {
+  | exn =>
+    let errMsg: string = %raw(`(exn => exn.message || "Failed to fetch messages")`)(exn)
+    Error(errMsg)
+  }
+}
+
+/// Send a message to the room via POST /api/v1/rooms/:id/messages.
+///
+/// Returns the created message or an error.
+let sendMessageViaApi = async (
+  state: chatState,
+  ~token: string,
+  ~body: string,
+): result<message, string> => {
+  let url = `/api/v1/rooms/${state.roomId}/messages`
+
+  let payload: {..} = {
+    "body": body,
+    "reply_to": switch state.replyTo {
+    | Some(id) => id
+    | None => %raw(`null`)
+    },
+  }
+
+  try {
+    let response = await fetch(url, {
+      "method": "POST",
+      "headers": {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      "body": %raw(`JSON.stringify(payload)`),
+    })
+
+    let json: {..} = await response["json"]()
+
+    let msg: message = {
+      messageId: json["message_id"],
+      body: json["body"],
+      displayName: json["display_name"],
+      userId: json["user_id"],
+      sentAt: json["sent_at"],
+      references: json["references"],
+      isPinned: false,
+    }
+
+    Ok(msg)
+  } catch {
+  | exn =>
+    let errMsg: string = %raw(`(exn => exn.message || "Failed to send message")`)(exn)
+    Error(errMsg)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phoenix channel integration
+// ---------------------------------------------------------------------------
+
+/// Send a message via the Phoenix channel (real-time path).
+///
+/// This is the preferred send path — the channel broadcasts to all
+/// connected clients and the server persists via NNTPSBackend.
+let sendMessageViaChannel = (
+  channel: PhoenixSocket.channel,
+  state: chatState,
+  ~body: string,
+): unit => {
+  let payload = switch state.replyTo {
+  | Some(replyId) => %raw(`{ body: body, reply_to: replyId }`)
+  | None => %raw(`{ body: body }`)
+  }
+
+  PhoenixSocket.push(channel, "text", payload)
+
+  // Clear reply-to after sending.
+  state.replyTo = None
+  state.inputValue = ""
+}
+
+// ---------------------------------------------------------------------------
+// Message parsing
+// ---------------------------------------------------------------------------
+
+/// Parse a message from a JSON payload (Phoenix channel event).
+let parseMessageFromJson = (json: JSON.t): option<message> => {
+  switch json {
+  | Object(obj) =>
+    let getString = (key: string): string =>
+      switch obj->Dict.get(key) {
+      | Some(String(s)) => s
+      | _ => ""
+      }
+
+    let refs = switch obj->Dict.get("references") {
+    | Some(Array(arr)) =>
+      arr->Array.filterMap(item =>
+        switch item {
+        | String(s) => Some(s)
+        | _ => None
+        }
+      )
+    | _ => []
+    }
+
+    Some({
+      messageId: getString("message_id"),
+      body: getString("body"),
+      displayName: getString("display_name"),
+      userId: getString("user_id"),
+      sentAt: getString("sent_at"),
+      references: refs,
+      isPinned: switch obj->Dict.get("is_pinned") {
+      | Some(Boolean(b)) => b
+      | _ => false
+      },
+    })
+  | _ => None
+  }
+}
+
+/// Subscribe to incoming text messages on the channel.
+///
+/// Parses inbound "text" events and appends them to the message list.
+let subscribeToMessages = (channel: PhoenixSocket.channel, state: chatState): unit => {
+  PhoenixSocket.on(channel, "text", (payload: JSON.t) => {
+    let msg = parseMessageFromJson(payload)
+    switch msg {
+    | Some(m) =>
+      state.messages = Array.concat(state.messages, [m])
+    | None => ()
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Basic markdown rendering
+// ---------------------------------------------------------------------------
+
+/// Render basic markdown to HTML string.
+///
+/// Supports: **bold**, *italic*, `inline code`, ```code blocks```,
+/// [links](url), and line breaks.
+///
+/// This is intentionally simple — no full markdown parser, no XSS vectors.
+/// All HTML entities in the input are escaped first.
+let renderMarkdown = (text: string): string => {
+  // 1. Escape HTML entities.
+  let escaped = text
+    ->String.replaceAllRegExp(%re("/&/g"), "&amp;")
+    ->String.replaceAllRegExp(%re("/</g"), "&lt;")
+    ->String.replaceAllRegExp(%re("/>/g"), "&gt;")
+
+  // 2. Apply markdown patterns (order matters).
+  escaped
+    // Code blocks (triple backtick).
+    ->String.replaceAllRegExp(%re("/```([\\s\\S]*?)```/g"), "<pre><code>$1</code></pre>")
+    // Inline code (single backtick).
+    ->String.replaceAllRegExp(%re("/`([^`]+)`/g"), "<code>$1</code>")
+    // Bold (**text**).
+    ->String.replaceAllRegExp(%re("/\\*\\*(.+?)\\*\\*/g"), "<strong>$1</strong>")
+    // Italic (*text*).
+    ->String.replaceAllRegExp(%re("/\\*(.+?)\\*/g"), "<em>$1</em>")
+    // Links [text](url).
+    ->String.replaceAllRegExp(
+        %re("/\\[([^\\]]+)\\]\\(([^)]+)\\)/g"),
+        "<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>"
+      )
+    // Line breaks.
+    ->String.replaceAllRegExp(%re("/\\n/g"), "<br>")
+}
+
+// ---------------------------------------------------------------------------
+// Threading helpers
+// ---------------------------------------------------------------------------
+
+/// Check if a message is a reply (has references).
+let isReply = (msg: message): bool => {
+  Array.length(msg.references) > 0
+}
+
+/// Get the parent message ID (last reference in the chain).
+let parentId = (msg: message): option<string> => {
+  msg.references->Array.get(Array.length(msg.references) - 1)
+}
+
+/// Get all replies to a given message ID.
+let getReplies = (messages: array<message>, targetId: string): array<message> => {
+  messages->Array.filter(m =>
+    m.references->Array.some(ref => ref == targetId)
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Timestamp formatting
+// ---------------------------------------------------------------------------
+
+/// Format an ISO 8601 timestamp for display.
+///
+/// Shows "HH:MM" for today, "Yesterday HH:MM", or "MMM DD, HH:MM" for older.
+let formatTimestamp = (iso: string): string => {
+  %raw(`
+    (() => {
+      try {
+        const date = new Date(iso);
+        const now = new Date();
+        const hours = date.getHours().toString().padStart(2, '0');
+        const mins = date.getMinutes().toString().padStart(2, '0');
+        const time = hours + ':' + mins;
+
+        if (date.toDateString() === now.toDateString()) {
+          return time;
+        }
+
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (date.toDateString() === yesterday.toDateString()) {
+          return 'Yesterday ' + time;
+        }
+
+        const months = ['Jan','Feb','Mar','Apr','May','Jun',
+                        'Jul','Aug','Sep','Oct','Nov','Dec'];
+        return months[date.getMonth()] + ' ' + date.getDate() + ', ' + time;
+      } catch {
+        return iso;
+      }
+    })()
+  `)
+}
+
+// ---------------------------------------------------------------------------
+// State management
+// ---------------------------------------------------------------------------
+
+/// Subscribe to pinned message updates.
+let subscribeToPins = (channel: PhoenixSocket.channel, state: chatState): unit => {
+  PhoenixSocket.on(channel, "message_pinned", (payload: JSON.t) => {
+    let pinnedId = switch payload {
+    | Object(obj) =>
+      switch obj->Dict.get("message_id") {
+      | Some(String(s)) => Some(s)
+      | _ => None
+      }
+    | _ => None
+    }
+
+    switch pinnedId {
+    | Some(id) =>
+      // Mark the message as pinned in the list.
+      state.messages = state.messages->Array.map(m =>
+        if m.messageId == id {
+          {...m, isPinned: true}
+        } else {
+          m
+        }
+      )
+
+      // Add to pinned list if not already there.
+      let alreadyPinned = state.pinnedMessages->Array.some(m => m.messageId == id)
+      if !alreadyPinned {
+        switch state.messages->Array.find(m => m.messageId == id) {
+        | Some(m) =>
+          state.pinnedMessages = Array.concat(state.pinnedMessages, [{...m, isPinned: true}])
+        | None => ()
+        }
+      }
+    | None => ()
+    }
+  })
+}
+
+/// Load initial messages from the API and set up channel subscriptions.
+let initialize = async (
+  state: chatState,
+  ~channel: PhoenixSocket.channel,
+  ~token: string,
+): unit => {
+  state.isLoading = true
+
+  // Fetch initial messages from REST API.
+  switch await fetchMessages(state, ~token) {
+  | Ok(messages) =>
+    state.messages = messages
+    state.hasMore = Array.length(messages) >= 50
+  | Error(_) =>
+    // Channel-only mode if API fails.
+    ()
+  }
+
+  state.isLoading = false
+
+  // Subscribe to real-time updates via channel.
+  subscribeToMessages(channel, state)
+  subscribeToPins(channel, state)
+}
+
+/// Load older messages (scrollback).
+let loadMore = async (state: chatState, ~token: string): unit => {
+  if !state.isLoading && state.hasMore {
+    state.isLoading = true
+
+    let oldestId = switch state.messages->Array.get(0) {
+    | Some(m) => Some(m.messageId)
+    | None => None
+    }
+
+    switch await fetchMessages(state, ~token, ~before=oldestId) {
+    | Ok(older) =>
+      state.messages = Array.concat(older, state.messages)
+      state.hasMore = Array.length(older) >= 50
+    | Error(_) =>
+      state.hasMore = false
+    }
+
+    state.isLoading = false
+  }
+}
+
+/// Set the reply target for the next message.
+let setReplyTo = (state: chatState, messageId: option<string>): unit => {
+  state.replyTo = messageId
+}
+
+/// Update the input value (for controlled input).
+let setInputValue = (state: chatState, value: string): unit => {
+  state.inputValue = value
+}

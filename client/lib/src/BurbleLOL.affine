@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// BurbleLOL.affine — LOL integration for world corpus language support.
+//
+// AffineScript migration of BurbleLOL.res
+
+module Language = {
+  type t = {
+    iso3: string,
+    iso1: option<string>,
+    name: string,
+  }
+
+  /// Convert a string code to a validated language entry using LOL registry.
+  let fromCode = (code: string): option<t> => {
+    // In production, this calls into the LOL registry in standards/lol
+    // For this bridge, we provide a placeholder that mimics the interface.
+    Some({
+      iso3: "eng",
+      iso1: Some("en"),
+      name: "English",
+    })
+  }
+}
+
+module Translation = {
+  /// Request a parallel text alignment for a given message.
+  let align = (text: string, source: string, target: string): promise<string> => {
+    // Hooks into LOL's super-parallel corpus alignment.
+    Js.Promise.resolve(text)
+  }
+}

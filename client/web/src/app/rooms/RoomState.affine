@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// RoomState.affine — Client-side room state management.
+//
+// AffineScript migration of RoomState.res
+
+/// Participant info as seen by the client.
+type participant = {
+  userId: string,
+  displayName: string,
+  voiceState: string,
+  isSpeaking: bool,
+  volume: float,
+}
+
+/// Text message in the room's NNTPS-backed text channel.
+type textMessage = {
+  messageId: string,
+  userId: string,
+  displayName: string,
+  body: string,
+  sentAt: string,
+  /// NNTPS thread references (parent message IDs).
+  references: array<string>,
+  /// Vext verification hash (clients can verify feed integrity).
+  vextHash: option<string>,
+}
+
+/// Room state.
+type t = {
+  mutable roomId: string,
+  mutable roomName: string,
+  mutable serverId: string,
+  mutable mode: string,
+  mutable participants: dict<participant>,
+  mutable messages: array<textMessage>,
+  mutable pinnedMessages: array<string>,
+  mutable isConnected: bool,
+}
+
+/// Create empty room state.
+let make = (~roomId: string, ~roomName: string, ~serverId: string): t => {
+  roomId,
+  roomName,
+  serverId,
+  mode: "open",
+  participants: Dict.make(),
+  messages: [],
+  pinnedMessages: [],
+  isConnected: false,
+}
+
+/// Add or update a participant.
+let upsertParticipant = (state: t, p: participant): unit => {
+  Dict.set(state.participants, p.userId, p)
+}
+
+/// Remove a participant.
+let removeParticipant = (state: t, userId: string): unit => {
+  Dict.delete(state.participants, userId)
+}
+
+/// Update a participant's voice state.
+let setParticipantVoiceState = (state: t, userId: string, voiceState: string): unit => {
+  switch Dict.get(state.participants, userId) {
+  | Some(p) => Dict.set(state.participants, userId, {...p, voiceState})
+  | None => ()
+  }
+}
+
+/// Mark a participant as speaking or not.
+let setParticipantSpeaking = (state: t, userId: string, speaking: bool): unit => {
+  switch Dict.get(state.participants, userId) {
+  | Some(p) => Dict.set(state.participants, userId, {...p, isSpeaking: speaking})
+  | None => ()
+  }
+}
+
+/// Add a text message.
+let addMessage = (state: t, msg: textMessage): unit => {
+  let _ = Array.push(state.messages, msg)
+}
+
+/// Get participant count.
+let participantCount = (state: t): int =>
+  Dict.keysToArray(state.participants)->Array.length
+
+/// Get all participants sorted by display name.
+let sortedParticipants = (state: t): array<participant> => {
+  Dict.valuesToArray(state.participants)
+  ->Array.toSorted((a, b) => String.localeCompare(a.displayName, b.displayName))
+}
+
+/// Get recent messages (newest last).
+let recentMessages = (state: t, ~limit: int=50): array<textMessage> => {
+  let len = Array.length(state.messages)
+  if len <= limit {
+    state.messages
+  } else {
+    Array.slice(state.messages, ~start=len - limit, ~end=len)
+  }
+}

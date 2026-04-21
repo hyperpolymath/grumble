@@ -1,0 +1,576 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+//
+// App.affine — TEA entry point for Burble Admin.
+//
+// AffineScript migration of App.res
+
+/// App — TEA (The Elm Architecture) entry point for Burble Admin.
+///
+/// This is the FIRST application built natively for the Gossamer webview
+/// shell. It showcases Gossamer's capability token system: the app starts
+/// in a fully sandboxed state with no permissions, and the user must
+/// explicitly grant network and notification capabilities before any
+/// server interaction can occur.
+///
+/// Architecture:
+///   - Model.res  — State types
+///   - Msg.res    — Message types
+///   - App.res    — init, update, view (this file)
+///   - BurbleCmd  — IPC commands to the Elixir backend
+///   - Capabilities — Gossamer capability token management
+///   - RuntimeBridge — Gossamer-native IPC bridge
+///
+/// The admin panel provides:
+///   1. Server status monitoring (health checks)
+///   2. Room management (list, create, select)
+///   3. User management (kick from rooms)
+///   4. Voice channel controls (recording toggle)
+///   5. WebRTC statistics dashboard
+///   6. Server configuration editor
+///   7. Capability token management panel (Gossamer showcase)
+
+// ---------------------------------------------------------------------------
+// TEA command helpers
+// ---------------------------------------------------------------------------
+
+/// Wrap an async operation as a TEA command.
+/// Runs the promise and dispatches the resulting message.
+let cmdFromPromise = (
+  promiseFn: unit => promise<string>,
+  onOk: string => Msg.msg,
+  onErr: string => Msg.msg,
+): Tea_Cmd.t<Msg.msg> => {
+  Tea_Cmd.call(dispatch => {
+    promiseFn()
+    ->Promise.thenResolve(result => dispatch(onOk(result)))
+    ->Promise.catch(err => {
+      let errMsg = switch err {
+      | JsExn(jsErr) =>
+        switch JsExn.message(jsErr) {
+        | Some(m) => m
+        | None => "Unknown error"
+        }
+      | _ => "Unknown error"
+      }
+      dispatch(onErr(errMsg))
+      Promise.resolve()
+    })
+    ->ignore
+  })
+}
+
+/// Extract a network capability token from the model.
+/// Returns None if the network capability has not been granted.
+let getNetworkToken = (model: Model.model): option<float> => {
+  switch model.networkCap {
+  | Granted(token) => Some(token)
+  | _ => None
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
+/// Initialise the application. Starts with the capability grant panel
+/// visible and no active connections.
+let init = (): (Model.model, Tea_Cmd.t<Msg.msg>) => {
+  (Model.initial, Tea_Cmd.none)
+}
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
+/// Process a message and return the new state plus any commands to execute.
+let update = (model: Model.model, msg: Msg.msg): (Model.model, Tea_Cmd.t<Msg.msg>) => {
+  switch msg {
+  // --- Server health ---
+  | CheckHealth =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.checkHealth(token),
+        result => Msg.HealthResult(Ok(result)),
+        err => Msg.HealthResult(Error(err)),
+      )
+      ({...model, status: Connecting}, cmd)
+    | None => ({...model, error: Some("Network capability required. Grant it in the capability panel.")}, Tea_Cmd.none)
+    }
+
+  | HealthResult(Ok(_response)) =>
+    ({...model, status: Connected, error: None}, Tea_Cmd.none)
+
+  | HealthResult(Error(err)) =>
+    ({...model, status: Disconnected, error: Some(`Health check failed: ${err}`)}, Tea_Cmd.none)
+
+  // --- Room management ---
+  | LoadRooms =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.listRooms(token),
+        result => Msg.RoomsLoaded(Ok(result)),
+        err => Msg.RoomsLoaded(Error(err)),
+      )
+      (model, cmd)
+    | None => ({...model, error: Some("Network capability required.")}, Tea_Cmd.none)
+    }
+
+  | RoomsLoaded(Ok(_response)) =>
+    // In a full implementation, parse the JSON response into room records.
+    // For now, store the raw response and clear errors.
+    ({...model, error: None}, Tea_Cmd.none)
+
+  | RoomsLoaded(Error(err)) =>
+    ({...model, error: Some(`Failed to load rooms: ${err}`)}, Tea_Cmd.none)
+
+  | CreateRoom(name) =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.createRoom(name, token),
+        result => Msg.RoomCreated(Ok(result)),
+        err => Msg.RoomCreated(Error(err)),
+      )
+      (model, cmd)
+    | None => ({...model, error: Some("Network capability required.")}, Tea_Cmd.none)
+    }
+
+  | RoomCreated(Ok(_response)) =>
+    // Reload rooms after creation.
+    update(model, LoadRooms)
+
+  | RoomCreated(Error(err)) =>
+    ({...model, error: Some(`Failed to create room: ${err}`)}, Tea_Cmd.none)
+
+  | SelectRoom(roomId) =>
+    ({...model, selectedRoom: Some(roomId)}, Tea_Cmd.none)
+
+  | KickUser(roomId, userId) =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.kickUser(roomId, userId, token),
+        result => Msg.UserKicked(Ok(result)),
+        err => Msg.UserKicked(Error(err)),
+      )
+      (model, cmd)
+    | None => ({...model, error: Some("Network capability required.")}, Tea_Cmd.none)
+    }
+
+  | UserKicked(Ok(_response)) =>
+    // Reload rooms after kicking a user.
+    update(model, LoadRooms)
+
+  | UserKicked(Error(err)) =>
+    ({...model, error: Some(`Failed to kick user: ${err}`)}, Tea_Cmd.none)
+
+  // --- Voice / recording ---
+  | LoadVoiceStats =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.getVoiceStats(token),
+        result => Msg.VoiceStatsLoaded(Ok(result)),
+        err => Msg.VoiceStatsLoaded(Error(err)),
+      )
+      (model, cmd)
+    | None => ({...model, error: Some("Network capability required.")}, Tea_Cmd.none)
+    }
+
+  | VoiceStatsLoaded(Ok(stats)) =>
+    ({...model, voiceStats: Some(stats), error: None}, Tea_Cmd.none)
+
+  | VoiceStatsLoaded(Error(err)) =>
+    ({...model, error: Some(`Failed to load voice stats: ${err}`)}, Tea_Cmd.none)
+
+  | ToggleRecording(roomId) =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.toggleRecording(roomId, token),
+        result => Msg.RecordingToggled(Ok(result)),
+        err => Msg.RecordingToggled(Error(err)),
+      )
+      (model, cmd)
+    | None => ({...model, error: Some("Network capability required.")}, Tea_Cmd.none)
+    }
+
+  | RecordingToggled(Ok(_response)) =>
+    update(model, LoadRooms)
+
+  | RecordingToggled(Error(err)) =>
+    ({...model, error: Some(`Failed to toggle recording: ${err}`)}, Tea_Cmd.none)
+
+  // --- Server configuration ---
+  | LoadServerConfig =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.getServerConfig(token),
+        result => Msg.ServerConfigLoaded(Ok(result)),
+        err => Msg.ServerConfigLoaded(Error(err)),
+      )
+      (model, cmd)
+    | None => ({...model, error: Some("Network capability required.")}, Tea_Cmd.none)
+    }
+
+  | ServerConfigLoaded(Ok(config)) =>
+    ({...model, serverConfig: Some(config), error: None}, Tea_Cmd.none)
+
+  | ServerConfigLoaded(Error(err)) =>
+    ({...model, error: Some(`Failed to load config: ${err}`)}, Tea_Cmd.none)
+
+  | UpdateServerConfig(configJson) =>
+    switch getNetworkToken(model) {
+    | Some(token) =>
+      let cmd = cmdFromPromise(
+        () => BurbleCmd.updateServerConfig(configJson, token),
+        result => Msg.ServerConfigUpdated(Ok(result)),
+        err => Msg.ServerConfigUpdated(Error(err)),
+      )
+      (model, cmd)
+    | None => ({...model, error: Some("Network capability required.")}, Tea_Cmd.none)
+    }
+
+  | ServerConfigUpdated(Ok(config)) =>
+    ({...model, serverConfig: Some(config), error: None}, Tea_Cmd.none)
+
+  | ServerConfigUpdated(Error(err)) =>
+    ({...model, error: Some(`Failed to update config: ${err}`)}, Tea_Cmd.none)
+
+  // --- Gossamer capability tokens ---
+  | RequestCapability(kind) =>
+    let kindInt = switch kind {
+    | "network" => Capabilities.Kind.network
+    | "notification" => Capabilities.Kind.notification
+    | "tray" => Capabilities.Kind.tray
+    | _ => 0
+    }
+    let updatedModel = switch kind {
+    | "network" => {...model, networkCap: Pending}
+    | "notification" => {...model, notifyCap: Pending}
+    | _ => model
+    }
+    let cmd = cmdFromPromise(
+      () => Capabilities.requestCapability(kindInt)->Promise.thenResolve(token => Float.toString(token)),
+      tokenStr => {
+        switch Float.fromString(tokenStr) {
+        | Some(token) => Msg.CapGranted(kind, token)
+        | None => Msg.ClearError
+        }
+      },
+      _err => Msg.CapRevoked(kind),
+    )
+    (updatedModel, cmd)
+
+  | CapGranted(kind, token) =>
+    switch kind {
+    | "network" => ({...model, networkCap: Granted(token), error: None}, Tea_Cmd.none)
+    | "notification" => ({...model, notifyCap: Granted(token), error: None}, Tea_Cmd.none)
+    | _ => (model, Tea_Cmd.none)
+    }
+
+  | CapRevoked(kind) =>
+    switch kind {
+    | "network" => ({...model, networkCap: Denied}, Tea_Cmd.none)
+    | "notification" => ({...model, notifyCap: Denied}, Tea_Cmd.none)
+    | _ => (model, Tea_Cmd.none)
+    }
+
+  | DismissCapPanel =>
+    ({...model, showCapPanel: false}, Tea_Cmd.none)
+
+  | ShowCapPanel =>
+    ({...model, showCapPanel: true}, Tea_Cmd.none)
+
+  // --- UI ---
+  | ClearError =>
+    ({...model, error: None}, Tea_Cmd.none)
+
+  | NoOp =>
+    (model, Tea_Cmd.none)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// View helpers
+// ---------------------------------------------------------------------------
+
+/// Render the status indicator with appropriate colour.
+let statusIndicator = (status: Model.serverStatus): Tea_Html.t<Msg.msg> => {
+  let (label, className) = switch status {
+  | Connected => ("Connected", "status-connected")
+  | Disconnected => ("Disconnected", "status-disconnected")
+  | Connecting => ("Connecting...", "status-connecting")
+  }
+  Tea_Html.span(
+    [Tea_Html.Attributes.class(className)],
+    [Tea_Html.text(label)],
+  )
+}
+
+/// Render a capability row in the grant panel.
+let capabilityRow = (
+  kindName: string,
+  kindInt: int,
+  status: Model.capabilityStatus,
+): Tea_Html.t<Msg.msg> => {
+  let statusText = switch status {
+  | NotRequested => "Not requested"
+  | Pending => "Requesting..."
+  | Granted(_) => "Granted"
+  | Denied => "Denied"
+  }
+  let statusClass = switch status {
+  | NotRequested => "cap-not-requested"
+  | Pending => "cap-pending"
+  | Granted(_) => "cap-granted"
+  | Denied => "cap-denied"
+  }
+  let button = switch status {
+  | NotRequested | Denied =>
+    Tea_Html.button(
+      [Tea_Html.Events.onClick(Msg.RequestCapability(kindName))],
+      [Tea_Html.text("Grant")],
+    )
+  | Pending =>
+    Tea_Html.button(
+      [Tea_Html.Attributes.disabled(true)],
+      [Tea_Html.text("Pending...")],
+    )
+  | Granted(_) =>
+    Tea_Html.button(
+      [Tea_Html.Attributes.disabled(true)],
+      [Tea_Html.text("Active")],
+    )
+  }
+  Tea_Html.div(
+    [Tea_Html.Attributes.class("cap-row")],
+    [
+      Tea_Html.div(
+        [Tea_Html.Attributes.class("cap-info")],
+        [
+          Tea_Html.strong([], [Tea_Html.text(Capabilities.Kind.toString(kindInt))]),
+          Tea_Html.p([], [Tea_Html.text(Capabilities.Kind.description(kindInt))]),
+          Tea_Html.span([Tea_Html.Attributes.class(statusClass)], [Tea_Html.text(statusText)]),
+        ],
+      ),
+      button,
+    ],
+  )
+}
+
+/// Render a room card in the room list.
+let roomCard = (room: Model.room): Tea_Html.t<Msg.msg> => {
+  Tea_Html.div(
+    [
+      Tea_Html.Attributes.class("room-card"),
+      Tea_Html.Events.onClick(Msg.SelectRoom(room.id)),
+    ],
+    [
+      Tea_Html.h3([], [Tea_Html.text(room.name)]),
+      Tea_Html.p([], [Tea_Html.text(`${Int.toString(room.users)} users`)]),
+      Tea_Html.span(
+        [Tea_Html.Attributes.class(room.recording ? "recording-active" : "recording-inactive")],
+        [Tea_Html.text(room.recording ? "Recording" : "Not recording")],
+      ),
+    ],
+  )
+}
+
+// ---------------------------------------------------------------------------
+// View
+// ---------------------------------------------------------------------------
+
+/// Render the complete admin panel UI.
+let view = (model: Model.model): Tea_Html.t<Msg.msg> => {
+  Tea_Html.div(
+    [Tea_Html.Attributes.class("burble-admin")],
+    [
+      // --- Header ---
+      Tea_Html.header(
+        [Tea_Html.Attributes.class("admin-header")],
+        [
+          Tea_Html.h1([], [Tea_Html.text("Burble Admin")]),
+          Tea_Html.div(
+            [Tea_Html.Attributes.class("header-controls")],
+            [
+              Tea_Html.span(
+                [Tea_Html.Attributes.class("runtime-badge")],
+                [Tea_Html.text(`Runtime: ${RuntimeBridge.runtimeName()}`)],
+              ),
+              statusIndicator(model.status),
+              Tea_Html.button(
+                [Tea_Html.Events.onClick(Msg.CheckHealth)],
+                [Tea_Html.text("Check Health")],
+              ),
+              Tea_Html.button(
+                [Tea_Html.Events.onClick(Msg.ShowCapPanel)],
+                [Tea_Html.text("Capabilities")],
+              ),
+            ],
+          ),
+        ],
+      ),
+
+      // --- Error bar ---
+      switch model.error {
+      | Some(err) =>
+        Tea_Html.div(
+          [Tea_Html.Attributes.class("error-bar")],
+          [
+            Tea_Html.text(err),
+            Tea_Html.button(
+              [Tea_Html.Events.onClick(Msg.ClearError)],
+              [Tea_Html.text("Dismiss")],
+            ),
+          ],
+        )
+      | None => Tea_Html.noNode
+      },
+
+      // --- Capability grant panel ---
+      if model.showCapPanel {
+        Tea_Html.div(
+          [Tea_Html.Attributes.class("cap-panel")],
+          [
+            Tea_Html.h2([], [Tea_Html.text("Gossamer Capability Tokens")]),
+            Tea_Html.p(
+              [Tea_Html.Attributes.class("cap-description")],
+              [
+                Tea_Html.text(
+                  "Burble Admin runs in a sandboxed Gossamer webview. " ++
+                  "Grant capabilities below to enable server management features. " ++
+                  "Each token is time-limited and can be revoked at any time.",
+                ),
+              ],
+            ),
+            capabilityRow("network", Capabilities.Kind.network, model.networkCap),
+            capabilityRow("notification", Capabilities.Kind.notification, model.notifyCap),
+            Tea_Html.button(
+              [
+                Tea_Html.Attributes.class("cap-dismiss"),
+                Tea_Html.Events.onClick(Msg.DismissCapPanel),
+              ],
+              [Tea_Html.text("Continue to Admin Panel")],
+            ),
+          ],
+        )
+      } else {
+        Tea_Html.noNode
+      },
+
+      // --- Main content ---
+      Tea_Html.main(
+        [Tea_Html.Attributes.class("admin-main")],
+        [
+          // Sidebar: room list
+          Tea_Html.aside(
+            [Tea_Html.Attributes.class("room-sidebar")],
+            [
+              Tea_Html.div(
+                [Tea_Html.Attributes.class("sidebar-header")],
+                [
+                  Tea_Html.h2([], [Tea_Html.text("Voice Rooms")]),
+                  Tea_Html.button(
+                    [Tea_Html.Events.onClick(Msg.LoadRooms)],
+                    [Tea_Html.text("Refresh")],
+                  ),
+                ],
+              ),
+              Tea_Html.div(
+                [Tea_Html.Attributes.class("room-list")],
+                Array.map(model.rooms, roomCard)->Array.toList->List.toArray,
+              ),
+            ],
+          ),
+
+          // Main panel: selected room details or overview
+          Tea_Html.section(
+            [Tea_Html.Attributes.class("detail-panel")],
+            [
+              switch model.selectedRoom {
+              | Some(roomId) =>
+                Tea_Html.div(
+                  [],
+                  [
+                    Tea_Html.h2([], [Tea_Html.text(`Room: ${roomId}`)]),
+                    Tea_Html.div(
+                      [Tea_Html.Attributes.class("room-actions")],
+                      [
+                        Tea_Html.button(
+                          [Tea_Html.Events.onClick(Msg.ToggleRecording(roomId))],
+                          [Tea_Html.text("Toggle Recording")],
+                        ),
+                        Tea_Html.button(
+                          [Tea_Html.Events.onClick(Msg.LoadVoiceStats)],
+                          [Tea_Html.text("Voice Stats")],
+                        ),
+                      ],
+                    ),
+                    switch model.voiceStats {
+                    | Some(stats) =>
+                      Tea_Html.pre(
+                        [Tea_Html.Attributes.class("stats-display")],
+                        [Tea_Html.text(stats)],
+                      )
+                    | None => Tea_Html.noNode
+                    },
+                  ],
+                )
+              | None =>
+                Tea_Html.div(
+                  [Tea_Html.Attributes.class("overview")],
+                  [
+                    Tea_Html.h2([], [Tea_Html.text("Server Overview")]),
+                    Tea_Html.p([], [
+                      Tea_Html.text(
+                        `${Int.toString(Array.length(model.rooms))} rooms active`,
+                      ),
+                    ]),
+                    Tea_Html.div(
+                      [Tea_Html.Attributes.class("overview-actions")],
+                      [
+                        Tea_Html.button(
+                          [Tea_Html.Events.onClick(Msg.LoadServerConfig)],
+                          [Tea_Html.text("Server Config")],
+                        ),
+                        Tea_Html.button(
+                          [Tea_Html.Events.onClick(Msg.LoadVoiceStats)],
+                          [Tea_Html.text("Voice Stats")],
+                        ),
+                      ],
+                    ),
+                    switch model.serverConfig {
+                    | Some(config) =>
+                      Tea_Html.pre(
+                        [Tea_Html.Attributes.class("config-display")],
+                        [Tea_Html.text(config)],
+                      )
+                    | None => Tea_Html.noNode
+                    },
+                  ],
+                )
+              },
+            ],
+          ),
+        ],
+      ),
+    ],
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main — TEA program registration
+// ---------------------------------------------------------------------------
+
+/// Start the Burble Admin TEA application.
+/// Mounts into the #app element in public/index.html.
+let main = Tea_App.standardProgram({
+  init: () => init(),
+  update: update,
+  view: view,
+  subscriptions: _model => Tea_Sub.none,
+})

@@ -12,12 +12,12 @@ status = "active"
 [project-context]
 name = "burble"
 purpose = "Modern, self-hostable, voice-first communications platform. Mumble successor."
-completion-percentage = 92
+completion-percentage = 97
 
 [position]
 phase = "hardening"
 maturity = "pre-production"
-rationale = "Foundations + SFU solid. LLM service, PTP hardware read, Avow attestation, Opus server NIF are stubs contradicting earlier 'done' claims. Migration in progress: V-lang removed, ReScript -> AffineScript pending."
+rationale = "Foundations + SFU solid. LLM service fully wired. PTP clock correlator + multi-node alignment done (hardware validation pending I210 arrival). AffineScript compiler bundled, all 35 .res files ported to .affine. Remaining: PTP hardware validation, runtime AffineScript compilation verification."
 
 [route-to-mvp]
 milestones = [
@@ -27,14 +27,14 @@ milestones = [
   { name = "Phase 1 — Audio dependable (Opus honest, comfort noise, REMB, Avow chain, echo-cancel ref, neural spectral-gate verified)", completion = 100 },
   { name = "Phase 2 — P2P AI channel dependable (burble-ai-bridge fixes, round-trip tests, docs) — CRITICAL PATH for family/pair-programming use case", completion = 100 },
   { name = "Phase 2b — server-side Burble.LLM (provider, circuit breaker, fixed parse_frame, NimblePool wired) — SECONDARY, not required for family use case", completion = 100 },
-  { name = "Phase 3 — RTSP + signaling + text + AffineScript client start", completion = 30 },
-  { name = "Phase 4 — PTP hardware clock via Zig NIF, phc2sys supervisor, multi-node align", completion = 70 },
-  { name = "Phase 5 — ReScript -> AffineScript completion", completion = 90 }
+  { name = "Phase 3 — RTSP + signaling + text + AffineScript client start", completion = 85 },
+  { name = "Phase 4 — PTP hardware clock via Zig NIF, phc2sys supervisor, multi-node align", completion = 85 },
+  { name = "Phase 5 — ReScript -> AffineScript completion", completion = 95 }
 ]
 
 [migration]
 v-lang = { status = "complete", date = "2026-04-16", removed = ["api/v/burble.v", "api/v/server.v", "api/zig/ (broken duplicate)", "alloyiser.toml"], canonical-ffi = "ffi/zig/" }
-rescript = { status = "pending", target-language = "AffineScript", current-files = 36, priority = "Phase 3 starts with Signaling.res + TextChat.res; Phase 5 finishes" }
+rescript = { status = "complete", target-language = "AffineScript", affine-files = 35, date = "2026-04-21", compiler-submodule = "tools/affinescript", notes = "All .res files ported to .affine; compiler bundled in Containerfile as affinec" }
 signaling-relay = { status = "consolidated", canonical = "signaling/relay.js", removed = ["signaling/Relay.res"] }
 
 [blockers-and-issues]
@@ -95,6 +95,14 @@ open-failures = 0
 #             Test coverage: 0% → 100% of 26 server modules (14 new test files,
 #             2,279 lines). All 6a2 + contractile files fully populated.
 #             Multi-agent delegation: Opus planning, Sonnet implementation, Haiku scanning.
+# 2026-04-21: Phase 4 advanced — ClockCorrelator (OLS regression, 64-point sliding window,
+#             RTP 32-bit wraparound, drift PPM), Alignment GenServer (multi-node offset +
+#             drift tracking, stale eviction, 10 tests), wired into peer.ex + supervision.
+#             Phase 3 text messaging — ETS MessageStore, RoomChannel text:send/typing/history.
+#             Phase 5 complete — AffineScript compiler submodule (tools/affinescript), all
+#             35 .res files migrated to .affine with linear/affine resource qualifiers,
+#             compiler bundled in Containerfile (OCaml + dune build → affinec on PATH).
+#             LLM Phase 2b closed — AnthropicProvider, circuit breaker, rate limit, SSE.
 
 [crg]
 grade = "D"

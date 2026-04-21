@@ -75,6 +75,10 @@ defmodule Burble.Application do
       # wall_to_rtp conversion + PPM drift estimation for Phase 4 playout alignment.
       {Burble.Timing.ClockCorrelator, [name: Burble.Timing.ClockCorrelator, clock_rate: 48_000]},
 
+      # Multi-node playout alignment — tracks per-node clock offsets and drift,
+      # enables synchronized playout across Burble instances in the same room.
+      {Burble.Timing.Alignment, [name: Burble.Timing.Alignment]},
+
       # Groove discovery endpoint (message queue for Gossamer/PanLL/etc.)
       # Serves GET /.well-known/groove with Burble capability manifest.
       # Groove connectors verified via Idris2 dependent types (Groove.idr).

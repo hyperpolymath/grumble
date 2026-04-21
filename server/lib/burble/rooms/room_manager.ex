@@ -56,4 +56,28 @@ defmodule Burble.Rooms.RoomManager do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  @doc """
+  Create an ad-hoc room for an instant-connect session.
+
+  Generates a unique room ID and starts it under the RoomSupervisor.
+  Returns `{:ok, %{id: room_id}}` or `{:error, reason}`.
+  """
+  def create_adhoc_room(creator_id, creator_name) do
+    room_id = Burble.RoomNamer.generate()
+
+    case start_room(room_id, server_id: "default", name: "#{creator_name}'s Room", creator_id: creator_id) do
+      {:ok, _pid} -> {:ok, %{id: room_id}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Join a room by ID with minimal user info (used by InstantConnect).
+
+  Wraps `join/4` with a user_info map built from the user ID and name.
+  """
+  def join_room(room_id, user_id, user_name) do
+    join(room_id, user_id, %{display_name: user_name, is_guest: false})
+  end
 end

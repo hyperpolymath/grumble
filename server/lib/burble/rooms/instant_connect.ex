@@ -323,26 +323,20 @@ defmodule Burble.Rooms.InstantConnect do
   end
 
   defp connect_user(token, joining_user_id, joining_user_name) do
-    # Get or create a room for this connection.
     room_id =
       if token.room_id do
         token.room_id
       else
-        # Create an ad-hoc room.
-        # Uses runtime dispatch — create_adhoc_room/2 may not yet be implemented.
-        case apply(RoomManager, :create_adhoc_room, [token.creator_id, token.creator_name]) do
+        case RoomManager.create_adhoc_room(token.creator_id, token.creator_name) do
           {:ok, room} -> room.id
           _ -> nil
         end
       end
 
     if room_id do
-      # Join the room.
-      # Uses runtime dispatch — join_room/3 may not yet be implemented.
-      case apply(RoomManager, :join_room, [room_id, joining_user_id, joining_user_name]) do
+      case RoomManager.join_room(room_id, joining_user_id, joining_user_name) do
         {:ok, _participant} ->
           updated_token = %{token | uses: token.uses + 1, room_id: room_id}
-
           Logger.info("[InstantConnect] #{joining_user_id} connected via #{token.code} → room #{room_id}")
           {:ok, room_id, updated_token}
 

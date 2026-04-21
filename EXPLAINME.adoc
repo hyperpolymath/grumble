@@ -130,6 +130,74 @@ Burble replaces traditional firewalls with a **Software-Defined Perimeter (SDP)*
 - SDP Implementation: `server/lib/burble/security/sdp.ex`
 - AWOL Algorithm: `server/lib/burble/network/awol.ex`
 
+== Burble Bolt
+
+[quote, README]
+____
+burble bolt <ip> — magic incoming-call packet, like ping but it rings the other end
+____
+
+A https://en.wikipedia.org/wiki/Wake-on-LAN[Wake-on-LAN]-inspired magic packet
+for voice. Fire it at any IPv4, IPv6, or domain address; if Burble is running
+there it flashes a desktop notification and an incoming-call overlay in the
+browser — no phone number, no account, just a network address.
+
+The wire format is deliberately WoL-compatible: `"BURB"` magic header, target
+MAC repeated 16 times (same layout as a WoL magic packet), then a JSON payload.
+This means existing WoL-aware network switches and firmware pass the packet
+through without configuration.
+
+Transport priority:
+
+. Raw UDP port 7373 (Burble native, no auth required)
+. UDP port 9 simultaneously (IANA discard / WoL port — wake dormant hardware)
+. QUIC datagrams (RFC 9221) on port 7373 when quicer is compiled in — TLS 1.3 sender authentication
+
+NAPTR/SRV DNS lookup lets you bolt by domain instead of IP:
+
+[source,dns]
+----
+example.com. IN NAPTR 10 1 "U" "BURBLE+bolt" "!.*!bolt://198.51.100.1:7373!" .
+_burble._bolt._udp.example.com. IN SRV 10 1 7373 burble.example.com.
+----
+
+**What happens on the receiving end:**
+
+. `Burble.Bolt.Listener` (UDP GenServer, port 7373) decodes the packet
+. `Burble.Bolt.Notify` broadcasts on `Phoenix.PubSub` topic `"bolt:notifications"`
+. `BurbleWeb.BoltChannel` forwards to every connected browser tab
+. Browser fires the https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API[Web Notifications API] for a desktop pop-up
+. Incoming-call overlay appears with Accept / Dismiss buttons
+. Accept sends a return bolt to the sender as acknowledgement
+
+**Quick start:**
+
+[source,shell]
+----
+# Direct IP
+bin/burble bolt 192.168.1.100
+
+# IP + MAC (strongest WoL compat — NIC wakes first, then Burble handles it)
+bin/burble bolt 192.168.1.100/aa:bb:cc:dd:ee:ff
+
+# IPv6
+bin/burble bolt fe80::1
+
+# DNS NAPTR/SRV/A lookup
+bin/burble bolt user@example.com
+
+# LAN broadcast (all Burble nodes on the segment)
+bin/burble bolt --broadcast
+
+# In development
+mix bolt 192.168.1.100
+----
+
+- Packet format: `server/lib/burble/bolt/packet.ex`
+- Listener: `server/lib/burble/bolt/listener.ex`
+- DNS resolver: `server/lib/burble/bolt/naptr.ex`
+- Browser channel: `server/lib/burble_web/channels/bolt_channel.ex`
+
 == VeriSimDB & Vext Integrity
 
 [quote, README]
@@ -189,4 +257,7 @@ hyperpolymath repos:
 | `server/lib/mix/tasks/bench_coprocessor.ex` | Benchmarks are runnable
 | `containers/compose.toml` | One-command deployment is real
 | `src/abi/Types.idr` | Formal proofs exist
+| `server/lib/burble/bolt/packet.ex` | Burble Bolt wire format (WoL-compatible magic packet)
+| `server/lib/burble/bolt/naptr.ex` | DNS NAPTR/SRV resolution for bolt-by-domain
+| `server/lib/burble_web/channels/bolt_channel.ex` | Browser incoming-call notification channel
 |===

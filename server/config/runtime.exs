@@ -8,6 +8,14 @@ if System.get_env("PHX_SERVER") do
   config :burble, BurbleWeb.Endpoint, server: true
 end
 
+# STUN/TURN — read at startup so TurnCredentials works in all environments.
+# Set TURN_SECRET (required for TURN), TURN_REALM, STUN_URL, TURN_URL, TURNS_URL.
+config :burble,
+  stun_url: System.get_env("STUN_URL", "stun:stun.l.google.com:19302"),
+  turn_url: System.get_env("TURN_URL"),
+  turns_url: System.get_env("TURNS_URL"),
+  turn_secret: System.get_env("TURN_SECRET")
+
 # SNIF configuration - path to WASM modules
 snif_path = 
   System.get_env("BURBLE_SNIF_PATH") ||

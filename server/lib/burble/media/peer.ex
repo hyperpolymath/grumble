@@ -42,8 +42,6 @@ defmodule Burble.Media.Peer do
     }
   ]
 
-  @ice_servers [%{urls: "stun:stun.l.google.com:19302"}]
-
   # SECURITY FIX: Maximum outbound tracks (peers) before rejecting new
   # additions. Each peer P in a room of N peers creates N-1 sendonly
   # transceivers, so total transceivers across all peers is O(N^2).
@@ -100,7 +98,7 @@ defmodule Burble.Media.Peer do
     channel_pid = Keyword.fetch!(opts, :channel_pid)
     existing_peers = Keyword.get(opts, :existing_peers, [])
 
-    ice_servers = Keyword.get(opts, :ice_servers, @ice_servers)
+    ice_servers = Keyword.get(opts, :ice_servers, Burble.Network.TurnCredentials.ice_servers(peer_id))
 
     # Create PeerConnection.
     {:ok, pc} = PeerConnection.start_link(

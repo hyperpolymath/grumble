@@ -76,7 +76,12 @@ defmodule BurbleWeb.RoomChannel do
             |> assign(:room_id, room_id)
             |> assign(:display_name, display_name)
 
-          {:ok, room_state, socket}
+          # Send ICE server config to the browser so it uses TURN credentials
+          # when creating its RTCPeerConnection (critical for symmetric NAT users).
+          ice_servers = Burble.Network.TurnCredentials.ice_servers(user_id)
+          room_state_with_ice = Map.put(room_state, :ice_servers, ice_servers)
+
+          {:ok, room_state_with_ice, socket}
 
         {:error, reason} ->
           {:error, %{reason: reason}}

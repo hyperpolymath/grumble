@@ -74,6 +74,9 @@ defmodule BurbleWeb.Router do
     # RTSP transport status (public — operator/monitoring endpoint)
     get "/rtsp/status", RTSPController, :status
 
+    # ICE server config — short-lived STUN/TURN credentials for WebRTC clients.
+    get "/ice-servers", IceServersController, :index
+
     # Instant connect — join via link/QR/code (public, no auth required)
     get "/join/:code", InstantConnectController, :lookup
     post "/join/:code", InstantConnectController, :redeem

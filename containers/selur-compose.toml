@@ -15,6 +15,9 @@
 # Required secrets (set via environment or .env file):
 #   SECRET_KEY_BASE   — Phoenix secret key
 #   GUARDIAN_SECRET    — JWT signing key (defaults to SECRET_KEY_BASE)
+#   TURN_SECRET        — HMAC secret for time-limited TURN credentials (generate with: openssl rand -hex 32)
+#   TURN_REALM         — TURN realm, usually your domain (e.g. burble.example.com)
+#   TURN_EXTERNAL_IP  — Public IP of your server (required for coturn behind NAT)
 #
 # Optional SMTP (for magic link emails):
 #   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
@@ -49,6 +52,13 @@ environment = [
   "BURBLE_TOPOLOGY=monarchic",
   # Proven NIF shared objects directory.
   "PROVEN_LIB_DIR=/app/lib/burble-0.1.0/priv",
+  # STUN/TURN — used to generate ICE server config for browser clients.
+  # TURN_SECRET must match the secret in coturn.conf.
+  "TURN_URL=turn:${TURN_REALM:-burble.local}:3478",
+  "TURNS_URL=turns:${TURN_REALM:-burble.local}:5349",
+  "TURN_SECRET=${TURN_SECRET:-change-me-in-production}",
+  "TURN_REALM=${TURN_REALM:-burble.local}",
+  "STUN_URL=stun:${TURN_REALM:-burble.local}:3478",
 ]
 # Secrets — inject at deploy time via environment or .env file:
 #   SECRET_KEY_BASE=<mix phx.gen.secret>
@@ -70,6 +80,32 @@ ports = ["4020:80"]
 networks = ["burble-internal"]
 
 # =============================================================================
+# coturn — STUN/TURN relay (essential for NAT traversal)
+# =============================================================================
+# Without TURN, peers behind symmetric NAT silently fail to connect.
+# coturn provides both STUN (NAT discovery) and TURN (relay fallback).
+#
+# Uses host networking so coturn sees real client IPs for NAT detection.
+# Firewall: open 3478/udp+tcp (STUN/TURN), 5349/tcp (TURNS), 49152-65535/udp (relay range).
+[services.coturn]
+image = "coturn/coturn:latest"
+restart = "unless-stopped"
+network_mode = "host"
+volumes = [
+  "./coturn.conf:/etc/coturn/turnserver.conf:ro",
+  "coturn-data:/var/lib/coturn",
+]
+environment = [
+  "TURN_SECRET=${TURN_SECRET:-change-me-in-production}",
+  "TURN_REALM=${TURN_REALM:-burble.local}",
+  "TURN_EXTERNAL_IP=${TURN_EXTERNAL_IP:-}",
+]
+# Inject TURN_SECRET and optional external IP at runtime via shell expansion.
+# static-auth-secret and realm are not in coturn.conf so they can be env-driven.
+entrypoint = ["/bin/sh", "-c"]
+command = ["args='--config /etc/coturn/turnserver.conf'; args=\"$args --static-auth-secret=$TURN_SECRET --realm=$TURN_REALM\"; [ -n \"$TURN_EXTERNAL_IP\" ] && args=\"$args --external-ip=$TURN_EXTERNAL_IP\"; exec turnserver $args"]
+
+# =============================================================================
 # Networks
 # =============================================================================
 [networks.burble-internal]
@@ -80,6 +116,9 @@ driver = "bridge"
 # Volumes
 # =============================================================================
 [volumes.verisimdb-data]
+driver = "local"
+
+[volumes.coturn-data]
 driver = "local"
 
 # =============================================================================

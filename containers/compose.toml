@@ -46,8 +46,27 @@ depends_on = ["server"]
 restart = "unless-stopped"
 networks = ["burble-net"]
 
+[services.coturn]
+image = "coturn/coturn:latest"
+restart = "unless-stopped"
+network_mode = "host"
+volumes = [
+  "./coturn.conf:/etc/coturn/turnserver.conf:ro",
+  "coturn-data:/var/lib/coturn",
+]
+environment = [
+  "TURN_SECRET=${TURN_SECRET:-change-me-in-production}",
+  "TURN_REALM=${TURN_REALM:-burble.local}",
+  "TURN_EXTERNAL_IP=${TURN_EXTERNAL_IP:-}",
+]
+entrypoint = ["/bin/sh", "-c"]
+command = ["args='--config /etc/coturn/turnserver.conf'; args=\"$args --static-auth-secret=$TURN_SECRET --realm=$TURN_REALM\"; [ -n \"$TURN_EXTERNAL_IP\" ] && args=\"$args --external-ip=$TURN_EXTERNAL_IP\"; exec turnserver $args"]
+
 [networks.burble-net]
 driver = "bridge"
+
+[volumes.coturn-data]
+driver = "local"
 
 # Svalinn policy enforcement (when Stapeln stack is ready).
 # [x-svalinn]

@@ -74,26 +74,6 @@ defmodule BurbleWeb.Router do
     # RTSP transport status (public — operator/monitoring endpoint)
     get "/rtsp/status", RTSPController, :status
 
-    # ICE server config — short-lived STUN/TURN credentials for WebRTC clients.
-    get "/ice-servers", IceServersController, :index
-
-    # Burble Assist API — diagnostics and action surface for LLM/operator clients.
-    # Uses same :api pipeline (no auth required for reads; actions are capability-gated).
-    scope "/assist", Assist do
-      get "/rooms", RoomController, :index
-      get "/rooms/:id/health", RoomController, :health
-      get "/rooms/:id/sync", RoomController, :sync
-
-      get "/peers/:id/connectivity", PeerController, :connectivity
-      get "/peers/:id/media", PeerController, :media
-      get "/peers/:id/operator_view", PeerController, :operator_view
-
-      post "/actions/:action", ActionsController, :execute
-
-      get "/support/summary", SupportController, :summary
-      get "/discovery/resolve", SupportController, :resolve
-    end
-
     # Instant connect — join via link/QR/code (public, no auth required)
     get "/join/:code", InstantConnectController, :lookup
     post "/join/:code", InstantConnectController, :redeem

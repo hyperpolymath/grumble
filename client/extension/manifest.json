@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Burble AI Bridge",
+  "version": "0.1.0",
+  "description": "Connect Claude Code to Burble voice rooms via the local AI bridge.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://localhost:6474/*", "http://127.0.0.1:6474/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/burble-16.png",
+      "48": "icons/burble-48.png",
+      "128": "icons/burble-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "burble-ai-bridge@burble.local",
+      "strict_min_version": "109.0"
+    }
+  }
+}

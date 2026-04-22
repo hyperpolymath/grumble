@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { width: 340px; font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 16px; }
+    h1 { font-size: 16px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .subtitle { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
+
+    .status-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 12px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .dot.green { background: #3fb950; box-shadow: 0 0 6px #3fb95066; }
+    .dot.red { background: #f85149; }
+    .dot.grey { background: #484f58; }
+    .status-text { font-size: 13px; }
+
+    .section { margin-bottom: 12px; }
+    .section h2 { font-size: 13px; color: #8b949e; margin-bottom: 6px; }
+
+    textarea { width: 100%; height: 60px; padding: 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-family: monospace; font-size: 12px; resize: vertical; }
+    textarea:focus { outline: none; border-color: #58a6ff; }
+
+    button { padding: 6px 14px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .btn-green { background: #238636; color: #fff; }
+    .btn-green:hover { background: #2ea043; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    .messages { max-height: 150px; overflow-y: auto; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px; font-family: monospace; font-size: 11px; line-height: 1.6; }
+    .messages:empty::after { content: "No messages yet"; color: #484f58; }
+    .msg { word-break: break-all; }
+    .msg-in { color: #58a6ff; }
+    .msg-out { color: #3fb950; }
+
+    .row { display: flex; gap: 6px; margin-top: 6px; }
+    .config { margin-top: 8px; }
+    .config label { font-size: 11px; color: #8b949e; }
+    .config input { width: 100%; padding: 4px 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #e6edf3; font-size: 12px; font-family: monospace; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 256 256"><circle cx="128" cy="128" r="100" fill="none" stroke="#3fb950" stroke-width="6"/><path d="M50,128 L60,118 L70,138 L80,108 L90,148 Q128,80 166,148 L176,108 L186,138 L196,118 L206,128" fill="none" stroke="#3fb950" stroke-width="3" stroke-linecap="round"/></svg>
+    Burble AI Bridge
+  </h1>
+  <p class="subtitle">Claude Code ↔ Burble voice room</p>
+
+  <div class="status-row">
+    <div class="dot grey" id="dot"></div>
+    <span class="status-text" id="status-text">Checking...</span>
+  </div>
+
+  <div class="section">
+    <h2>Messages</h2>
+    <div class="messages" id="messages"></div>
+  </div>
+
+  <div class="section">
+    <h2>Send</h2>
+    <textarea id="send-input" placeholder='{"type": "chat", "message": "Hello from the extension"}'></textarea>
+    <div class="row">
+      <button class="btn-green" id="btn-send">Send</button>
+      <button class="btn-green btn-sm" id="btn-ping">Ping</button>
+    </div>
+  </div>
+
+  <div class="config">
+    <label>Bridge URL</label>
+    <input id="bridge-url" type="text" value="http://localhost:6474" />
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

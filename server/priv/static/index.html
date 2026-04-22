@@ -208,6 +208,72 @@
       transition: all 0.15s;
     }
     .join-screen button:hover { background: #66ffaa; }
+
+    /* Send button in chat */
+    .chat-input button {
+      background: #238636;
+      border: none;
+      padding: 10px 16px;
+      color: #fff;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .chat-input button:hover { background: #2ea043; }
+
+    /* Toast notifications */
+    .toast-container {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      max-width: 360px;
+      animation: toast-in 0.2s ease-out;
+    }
+    .toast.error { border-color: #f85149; color: #f85149; }
+    .toast.success { border-color: #3fb950; color: #3fb950; }
+    .toast.info { border-color: #58a6ff; color: #58a6ff; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; } }
+
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+      .main { flex-direction: column; }
+      .sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #1e1e2e;
+        max-height: 120px;
+        overflow-y: auto;
+        flex-direction: row;
+        flex-wrap: wrap;
+      }
+      .sidebar h2 { display: none; }
+      .room-btn { flex: 1; min-width: 120px; }
+      .content { flex: 1; min-height: 0; }
+      .chat { height: 160px; }
+      .voice-bar { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+      .join-screen input { width: 90%; max-width: 280px; }
+      .participants { padding: 12px; }
+    }
+    @media (max-width: 480px) {
+      .voice-bar button { padding: 8px 12px; font-size: 11px; }
+      .sidebar { max-height: 80px; }
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      .toast, .room-btn, .voice-bar button, .audio-level-fill { transition: none; animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -223,7 +289,7 @@
   <div id="app" style="display:none; flex-direction:column; min-height:100vh;">
     <div class="header">
       <h1>BURBLE</h1>
-      <span id="conn-status" class="status">Disconnected</span>
+      <span id="conn-status" class="status" role="status" aria-live="polite">Disconnected</span>
       <span class="spacer" style="flex:1"></span>
       <span id="user-name" style="font-size:12px; color:#888;"></span>
     </div>
@@ -237,11 +303,12 @@
 
       <div class="content">
         <div id="room-view" style="display:none; flex:1; flex-direction:column;">
-          <div class="participants" id="participants"></div>
+          <div class="participants" id="participants" role="region" aria-label="Room participants"></div>
           <div class="chat">
-            <div class="chat-messages" id="chat-messages"></div>
+            <div class="chat-messages" id="chat-messages" aria-live="polite" aria-label="Chat messages"></div>
             <div class="chat-input">
-              <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendMessage()" />
+              <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendMessage()" aria-label="Chat message input" />
+              <button onclick="sendMessage()">Send</button>
             </div>
           </div>
         </div>
@@ -252,8 +319,8 @@
     </div>
 
     <div class="voice-bar">
-      <button id="mute-btn" onclick="toggleMute()">Mute</button>
-      <button id="deafen-btn" onclick="toggleDeafen()">Deafen</button>
+      <button id="mute-btn" onclick="toggleMute()" aria-pressed="false">Mute</button>
+      <button id="deafen-btn" onclick="toggleDeafen()" aria-pressed="false">Deafen</button>
       <div class="audio-level">
         <div id="audio-level-fill" class="audio-level-fill"></div>
       </div>
@@ -262,6 +329,9 @@
       <button onclick="leaveRoom()" style="background:#2a1a1a; border-color:#ff4444; color:#ff4444;">Disconnect</button>
     </div>
   </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toasts" aria-live="assertive"></div>
 
   <!-- Phoenix Socket JS (loaded from CDN for MVP) -->
   <script src="https://cdn.jsdelivr.net/npm/phoenix@1.7.20/priv/static/phoenix.min.js"></script>
@@ -282,6 +352,16 @@
       peerConnections: {},
     };
 
+    // ── Toast notifications ──
+    function showToast(message, type = 'info', duration = 5000) {
+      const container = document.getElementById('toasts');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+      setTimeout(() => { toast.remove(); }, duration);
+    }
+
     // ── Guest Join ──
     async function guestJoin() {
       const name = document.getElementById('display-name').value.trim() || 'Guest';
@@ -301,6 +381,9 @@
       document.getElementById('join-screen').style.display = 'none';
       document.getElementById('app').style.display = 'flex';
       document.getElementById('user-name').textContent = state.displayName;
+
+      // Fetch ICE servers (TURN credentials) before connecting.
+      await fetchIceServers();
 
       // Connect WebSocket
       connectSocket();
@@ -418,6 +501,8 @@
         // Handle leaves — close WebRTC connections
         if (diff.leaves) {
           Object.keys(diff.leaves).forEach(userId => {
+            const name = state.participants[userId]?.displayName || userId;
+            addChatMessage('System', `${name} left the room`, null);
             delete state.participants[userId];
             // Close peer connection
             if (state.peerConnections[userId]) {
@@ -465,7 +550,7 @@
         })
         .receive('error', (err) => {
           console.error('[Burble] Failed to join room:', err);
-          alert('Failed to join room: ' + (err.reason || 'unknown error'));
+          showToast('Failed to join room: ' + (err.reason || 'unknown error'), 'error');
         });
     }
 
@@ -504,6 +589,7 @@
         startAudioLevelMonitor();
       } catch (err) {
         console.warn('[Burble] Microphone denied:', err.message);
+        showToast('Microphone access denied — you can listen but not speak.', 'error');
       }
     }
 
@@ -538,12 +624,25 @@
     // For MVP this is mesh topology (works great for 2-8 people).
     // SFU upgrade (ex_webrtc on server) comes later for larger rooms.
 
-    const RTC_CONFIG = {
+    // ICE servers — fetched from the server (includes TURN credentials if configured).
+    // Falls back to public STUN if the fetch fails.
+    let RTC_CONFIG = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
       ]
     };
+
+    async function fetchIceServers() {
+      try {
+        const res = await fetch('/api/v1/ice-servers?user_id=' + encodeURIComponent(state.userId || 'anonymous'));
+        const data = await res.json();
+        if (data.ice_servers) {
+          RTC_CONFIG = { iceServers: data.ice_servers };
+        }
+      } catch {
+        // Keep default STUN fallback.
+      }
+    }
 
     // Create a peer connection for a remote user
     function createPeerConnection(remoteUserId) {
@@ -728,6 +827,7 @@
       const btn = document.getElementById('mute-btn');
       btn.textContent = state.muted ? 'Unmute' : 'Mute';
       btn.className = state.muted ? 'muted' : '';
+      btn.setAttribute('aria-pressed', state.muted);
 
       // Disable/enable local audio tracks (stops sending audio to peers)
       if (state.localStream) {
@@ -744,6 +844,7 @@
       const btn = document.getElementById('deafen-btn');
       btn.textContent = state.deafened ? 'Undeafen' : 'Deafen';
       btn.className = state.deafened ? 'muted' : '';
+      btn.setAttribute('aria-pressed', state.deafened);
 
       // Mute all remote audio elements
       document.querySelectorAll('audio[id^="audio-"]').forEach(el => {
@@ -792,12 +893,14 @@
         const initial = (p.displayName || '?')[0].toUpperCase();
         const avatarClass = p.isSpeaking ? 'avatar speaking' : 'avatar';
         const stateClass = p.voiceState === 'muted' ? 'voice-state muted' : 'voice-state';
+        const isYou = p.userId === state.userId;
+        const youTag = isYou ? ' <span style="color:#58a6ff;font-size:10px">(you)</span>' : '';
         const stateText = p.voiceState === 'connected' ? '' : ` (${p.voiceState})`;
 
         div.innerHTML = `
           <div class="${avatarClass}">${initial}</div>
           <div>
-            <div class="name">${escapeHtml(p.displayName)}</div>
+            <div class="name">${escapeHtml(p.displayName)}${youTag}</div>
             <div class="${stateClass}">${stateText}</div>
           </div>
         `;

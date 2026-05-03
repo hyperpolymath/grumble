@@ -1,0 +1,156 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# affinescript-canary.yml — AffineScript Compilation Canary
+#
+# Compiles every .affine file in the repo using the canonical affinescript
+# CLI. ADVISORY (canary) — failures are surfaced via GitHub annotations and
+# job summary, but do NOT block merges. Promote to required-for-merge once
+# parity with the .res fallback is proven (Burble grade B target).
+#
+# Companion: every .affine should have a .res sibling for fallback until the
+# canary is required. The pairing-audit job warns on unpaired files.
+#
+# To bump the affinescript version, change AFFINESCRIPT_REF below.
+
+name: AffineScript Canary
+
+on:
+  pull_request:
+    branches: ['**']
+    paths:
+      - '**.affine'
+      - '.github/workflows/affinescript-canary.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - '**.affine'
+      - '.github/workflows/affinescript-canary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AFFINESCRIPT_REPO: hyperpolymath/affinescript
+  AFFINESCRIPT_REF: fc37bb5896de24cefe65dbfc5cd657a2d0087df7  # main as of 2026-05-02; bump as needed
+  OCAML_COMPILER: '5.1'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Compile every .affine file (canary — advisory)
+  # ---------------------------------------------------------------------------
+  compile-affinescript:
+    name: Compile .affine files (canary)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # canary: surface failures, do not block merges
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Detect .affine files
+        id: detect
+        run: |
+          COUNT=$(find . -name '*.affine' -not -path './node_modules/*' -not -path './_build/*' -not -path './.git/*' | wc -l)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Found $COUNT .affine files"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::notice::No .affine files in repo — canary has nothing to do"
+          fi
+
+      - name: Cache affinescript build
+        if: steps.detect.outputs.count > 0
+        id: cache-affinescript
+        uses: actions/cache@13aacd865c20de90d75de3b17ebe84f7a17d57d2 # v4.0.0
+        with:
+          path: /usr/local/bin/affinescript
+          key: affinescript-${{ env.AFFINESCRIPT_REF }}-${{ runner.os }}
+
+      - name: Setup OCaml (cache miss only)
+        if: steps.detect.outputs.count > 0 && steps.cache-affinescript.outputs.cache-hit != 'true'
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ env.OCAML_COMPILER }}
+
+      - name: Build affinescript from source (cache miss only)
+        if: steps.detect.outputs.count > 0 && steps.cache-affinescript.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://github.com/${AFFINESCRIPT_REPO}.git" /tmp/affinescript-src
+          cd /tmp/affinescript-src
+          git fetch --depth 1 origin "${AFFINESCRIPT_REF}"
+          git checkout "${AFFINESCRIPT_REF}"
+          opam install --yes . --deps-only
+          opam exec -- dune build bin/main.exe
+          sudo cp _build/default/bin/main.exe /usr/local/bin/affinescript
+          affinescript --help | head -5 || echo "(--help unavailable, binary installed)"
+
+      - name: Compile every .affine file
+        if: steps.detect.outputs.count > 0
+        id: compile
+        run: |
+          set +e
+          failed=0
+          total=0
+          tmp=$(mktemp)
+          while IFS= read -r f; do
+            total=$((total+1))
+            if ! affinescript check "$f" >"$tmp" 2>&1; then
+              echo "::warning file=$f::affinescript check failed"
+              echo "--- $f ---"
+              cat "$tmp"
+              failed=$((failed+1))
+            fi
+          done < <(find . -name '*.affine' -not -path './node_modules/*' -not -path './_build/*' -not -path './.git/*')
+          rm -f "$tmp"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## AffineScript Canary Result" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total .affine files | $total |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Failed compilation | $failed |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| AffineScript ref | \`${AFFINESCRIPT_REF}\` |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failed" -gt 0 ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Canary advisory: $failed file(s) failed compilation. This does not block the merge — see annotations for details." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "All .affine files compiled cleanly." >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Pairing audit (.affine ↔ .res fallback)
+  # ---------------------------------------------------------------------------
+  # While the canary is advisory, every .affine must have a .res sibling so
+  # the build can fall back if affinescript miscompiles. Drop this job once
+  # the canary is promoted to required-for-merge (Burble grade B).
+  pairing-audit:
+    name: Pairing audit (.affine ↔ .res)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Audit .affine ↔ .res pairing
+        run: |
+          unpaired=0
+          while IFS= read -r f; do
+            res="${f%.affine}.res"
+            if [ ! -f "$res" ]; then
+              echo "::warning file=$f::No .res sibling (fallback missing). Drop this rule once the AffineScript canary is required-for-merge."
+              unpaired=$((unpaired+1))
+            fi
+          done < <(find . -name '*.affine' -not -path './node_modules/*' -not -path './_build/*' -not -path './.git/*')
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## .affine ↔ .res Pairing Audit" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$unpaired" -eq 0 ]; then
+            echo "All .affine files have .res fallbacks." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$unpaired .affine file(s) have no .res sibling. See annotations." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Advisory only at canary stage — exit clean
+          exit 0

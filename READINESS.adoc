@@ -50,6 +50,35 @@ cascade failures, per-user rate limiting is enforced, SSE streaming is plumbed t
 Phoenix endpoint, and `NimblePool` gates concurrency to 10 concurrent workers. REST endpoints
 `/llm/query`, `/llm/stream`, and `/llm/status` are live.
 
+=== Circuit Breakers and Health
+
+`Burble.CircuitBreaker` is a generic ETS-backed breaker with telemetry events
+(`[:burble, :circuit_breaker, :open | :close | :half_open | :reject]`). Each breaker
+is identified by an atom name, supports per-breaker `failure_threshold` and
+`open_duration_ms`, and exposes `with_breaker/2`, `state/1`, `reset/1`, and
+`snapshot/0`. The LLM provider was migrated to use it; future bridge integrations
+register their own named breakers.
+
+`GET /api/v1/health` returns the OTP supervisor, PubSub, VeriSimDB, WebRTC mesh,
+every registered circuit breaker's state, and the backup scheduler's status. A
+`200` response means everything is healthy; `503` means at least one subsystem is
+degraded or a breaker is open.
+
+=== Automated VeriSimDB Backups
+
+`Burble.Store.BackupScheduler` runs `Burble.Store.Backup.run/1` on a fixed
+interval (default 24 h). Each backup exports every octad whose name starts with
+a known prefix (`user:`, `room_config:`, `server_config:`, `invite:`, `magic:`)
+to a gzipped JSONL file `verisim-backup-YYYYMMDDTHHMMSSZ.jsonl.gz` and then
+prunes the directory to a retention count (default 14).
+
+Configuration is opt-in via env vars at runtime: `BURBLE_BACKUPS_ENABLED=true`,
+`BURBLE_BACKUP_DIR=/var/backups/burble`, `BURBLE_BACKUP_INTERVAL_HOURS`,
+`BURBLE_BACKUP_RETENTION`, `BURBLE_BACKUP_RUN_ON_STARTUP`. Failures are logged
+and emit `[:burble, :store, :backup, :error]` telemetry; the scheduler always
+schedules the next tick. Restore is intentionally manual (replaying overwrites
+live state) — see `Burble.Store.Backup` moduledoc for the procedure.
+
 === Elixir Server — Tested Modules
 
 The following server modules have 100 % test coverage (as of 2026-04-20):

@@ -8,12 +8,13 @@ defmodule Burble.LLM.AnthropicProvider do
   Calls the Claude Messages API via Erlang's built-in :httpc (no extra deps).
   Reads ANTHROPIC_API_KEY from environment. Falls back gracefully when unconfigured.
 
-  Includes a circuit breaker: after `@failure_threshold` consecutive failures the
-  circuit opens for `@open_duration_ms`, rejecting calls immediately. A single
-  probe is allowed after the open period (half-open); success closes the circuit.
+  Failure handling is delegated to `Burble.CircuitBreaker` under the
+  registered name `:llm_anthropic` (5 consecutive failures → open for 30s).
   """
 
   require Logger
+
+  alias Burble.CircuitBreaker
 
   @api_url ~c"https://api.anthropic.com/v1/messages"
   @api_version "2023-06-01"
@@ -21,87 +22,13 @@ defmodule Burble.LLM.AnthropicProvider do
   @default_max_tokens 4096
   @request_timeout 60_000
 
-  # Circuit breaker config
-  @failure_threshold 5
-  @open_duration_ms 30_000
-  @cb_table :burble_llm_circuit_breaker
+  @cb_name :llm_anthropic
 
   defp ensure_httpc do
     :inets.start()
     :ssl.start()
+    CircuitBreaker.register(@cb_name, failure_threshold: 5, open_duration_ms: 30_000)
     :ok
-  end
-
-  # ---------------------------------------------------------------------------
-  # Circuit breaker (ETS-based, no GenServer needed)
-  # ---------------------------------------------------------------------------
-
-  defp ensure_cb_table do
-    case :ets.info(@cb_table) do
-      :undefined -> :ets.new(@cb_table, [:set, :public, :named_table]); :ok
-      _ -> :ok
-    end
-  end
-
-  defp circuit_state do
-    ensure_cb_table()
-    failures = case :ets.lookup(@cb_table, :failures) do
-      [{_, n}] -> n
-      [] -> 0
-    end
-    opened_at = case :ets.lookup(@cb_table, :opened_at) do
-      [{_, t}] -> t
-      [] -> nil
-    end
-    {failures, opened_at}
-  end
-
-  defp record_success do
-    ensure_cb_table()
-    :ets.insert(@cb_table, {:failures, 0})
-    :ets.delete(@cb_table, :opened_at)
-  end
-
-  defp record_failure do
-    ensure_cb_table()
-    new_count = case :ets.lookup(@cb_table, :failures) do
-      [{_, n}] -> n + 1
-      [] -> 1
-    end
-    :ets.insert(@cb_table, {:failures, new_count})
-    if new_count >= @failure_threshold do
-      :ets.insert(@cb_table, {:opened_at, System.monotonic_time(:millisecond)})
-      Logger.error("[LLM/CB] Circuit OPEN after #{new_count} consecutive failures")
-    end
-  end
-
-  defp check_circuit do
-    case circuit_state() do
-      {failures, nil} when failures < @failure_threshold -> :closed
-      {_, opened_at} when is_integer(opened_at) ->
-        elapsed = System.monotonic_time(:millisecond) - opened_at
-        if elapsed >= @open_duration_ms, do: :half_open, else: :open
-      _ -> :closed
-    end
-  end
-
-  defp with_circuit_breaker(fun) do
-    case check_circuit() do
-      :open ->
-        {:error, :circuit_open}
-      state when state in [:closed, :half_open] ->
-        case fun.() do
-          {:ok, _} = ok ->
-            record_success()
-            ok
-          :ok ->
-            record_success()
-            :ok
-          {:error, _} = err ->
-            record_failure()
-            err
-        end
-    end
   end
 
   # ---------------------------------------------------------------------------
@@ -113,7 +40,7 @@ defmodule Burble.LLM.AnthropicProvider do
 
     case api_key() do
       nil -> {:error, :api_key_not_configured}
-      key -> with_circuit_breaker(fn -> do_query(user_id, prompt, key) end)
+      key -> CircuitBreaker.with_breaker(@cb_name, fn -> do_query(user_id, prompt, key) end)
     end
   end
 
@@ -121,28 +48,32 @@ defmodule Burble.LLM.AnthropicProvider do
     ensure_httpc()
 
     case api_key() do
-      nil -> {:error, :api_key_not_configured}
-      key -> with_circuit_breaker(fn -> do_stream(user_id, prompt, callback, key) end)
+      nil ->
+        {:error, :api_key_not_configured}
+
+      key ->
+        CircuitBreaker.with_breaker(@cb_name, fn -> do_stream(user_id, prompt, callback, key) end)
     end
   end
 
   @doc "Current circuit breaker state: `:closed`, `:half_open`, or `:open`."
-  def circuit_breaker_status, do: check_circuit()
+  def circuit_breaker_status, do: CircuitBreaker.state(@cb_name)
 
   @doc "Manually reset the circuit breaker (e.g. after fixing an outage)."
-  def reset_circuit_breaker, do: record_success()
+  def reset_circuit_breaker, do: CircuitBreaker.reset(@cb_name)
 
   # ---------------------------------------------------------------------------
   # HTTP calls
   # ---------------------------------------------------------------------------
 
   defp do_query(user_id, prompt, key) do
-    body = Jason.encode!(%{
-      model: model(),
-      max_tokens: max_tokens(),
-      messages: [%{role: "user", content: prompt}],
-      system: system_prompt(user_id)
-    })
+    body =
+      Jason.encode!(%{
+        model: model(),
+        max_tokens: max_tokens(),
+        messages: [%{role: "user", content: prompt}],
+        system: system_prompt(user_id)
+      })
 
     request = {@api_url, auth_headers(key), ~c"application/json", String.to_charlist(body)}
 
@@ -161,13 +92,14 @@ defmodule Burble.LLM.AnthropicProvider do
   end
 
   defp do_stream(user_id, prompt, callback, key) do
-    body = Jason.encode!(%{
-      model: model(),
-      max_tokens: max_tokens(),
-      stream: true,
-      messages: [%{role: "user", content: prompt}],
-      system: system_prompt(user_id)
-    })
+    body =
+      Jason.encode!(%{
+        model: model(),
+        max_tokens: max_tokens(),
+        stream: true,
+        messages: [%{role: "user", content: prompt}],
+        system: system_prompt(user_id)
+      })
 
     request = {@api_url, auth_headers(key), ~c"application/json", String.to_charlist(body)}
 
@@ -223,9 +155,11 @@ defmodule Burble.LLM.AnthropicProvider do
           case Jason.decode(json_str) do
             {:ok, %{"type" => "content_block_delta", "delta" => %{"text" => text}}} ->
               callback.(text)
+
             _ ->
               :ok
           end
+
         _ ->
           :ok
       end
@@ -250,8 +184,8 @@ defmodule Burble.LLM.AnthropicProvider do
 
   defp system_prompt(user_id) do
     "You are a helpful AI assistant integrated into Burble, a P2P voice and collaboration platform. " <>
-    "You are responding to user #{user_id}. Be concise, technical when appropriate, and helpful. " <>
-    "If the user asks about Burble features, you can mention voice chat, AI bridge, E2EE, and WebRTC."
+      "You are responding to user #{user_id}. Be concise, technical when appropriate, and helpful. " <>
+      "If the user asks about Burble features, you can mention voice chat, AI bridge, E2EE, and WebRTC."
   end
 
   defp ssl_opts do

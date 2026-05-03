@@ -43,19 +43,30 @@ defmodule BurbleWeb.API.HealthController do
       case Burble.Groove.HealthMesh.mesh_status() do
         %{peers: peers} ->
           webrtc_peers = Enum.filter(peers, fn peer -> :webrtc in peer.capabilities end)
+
           if Enum.all?(webrtc_peers, &(&1.status == :up)) do
             :healthy
           else
             :degraded
           end
-        _ -> :unknown
+
+        _ ->
+          :unknown
       end
 
+    breakers = Burble.CircuitBreaker.snapshot()
+    breakers_healthy = Enum.all?(breakers, fn {_name, %{state: s}} -> s != :open end)
+
+    backup_status = backup_status()
+
     overall =
-      if supervisor_ok and pubsub_ok and verisimdb_status == :healthy and webrtc_status == :healthy do
-        :healthy
-      else
-        :degraded
+      cond do
+        not supervisor_ok -> :degraded
+        not pubsub_ok -> :degraded
+        verisimdb_status != :healthy -> :degraded
+        webrtc_status != :healthy -> :degraded
+        not breakers_healthy -> :degraded
+        true -> :healthy
       end
 
     status_code = if overall == :healthy, do: 200, else: 503
@@ -68,9 +79,25 @@ defmodule BurbleWeb.API.HealthController do
       checks: %{
         supervisor: if(supervisor_ok, do: "ok", else: "down"),
         pubsub: if(pubsub_ok, do: "ok", else: "down"),
-        verisimdb: verisimdb_status
+        verisimdb: verisimdb_status,
+        webrtc: webrtc_status,
+        circuit_breakers: Map.new(breakers, fn {name, info} -> {name, info.state} end),
+        backup: backup_status
       },
       timestamp: DateTime.to_iso8601(DateTime.utc_now())
     })
+  end
+
+  defp backup_status do
+    case Process.whereis(Burble.Store.BackupScheduler) do
+      nil ->
+        %{scheduler: "down"}
+
+      _pid ->
+        case Burble.Store.BackupScheduler.status() do
+          %{} = s -> Map.put(s, :scheduler, "ok")
+          _ -> %{scheduler: "ok"}
+        end
+    end
   end
 end

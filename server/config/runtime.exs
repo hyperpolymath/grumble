@@ -42,6 +42,20 @@ if config_env() == :prod do
     auth: verisimdb_auth,
     timeout: String.to_integer(System.get_env("VERISIMDB_TIMEOUT") || "30000")
 
+  # Automated VeriSimDB backups — opt-in via BURBLE_BACKUPS_ENABLED=true.
+  # BURBLE_BACKUP_DIR should point at a mounted volume in the deployment.
+  backups_enabled = System.get_env("BURBLE_BACKUPS_ENABLED") == "true"
+
+  if backups_enabled do
+    config :burble, Burble.Store.BackupScheduler,
+      enabled: true,
+      interval_ms:
+        :timer.hours(String.to_integer(System.get_env("BURBLE_BACKUP_INTERVAL_HOURS") || "24")),
+      dir: System.get_env("BURBLE_BACKUP_DIR") || "/var/backups/burble",
+      retention_count: String.to_integer(System.get_env("BURBLE_BACKUP_RETENTION") || "14"),
+      run_on_startup: System.get_env("BURBLE_BACKUP_RUN_ON_STARTUP") == "true"
+  end
+
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
       raise """

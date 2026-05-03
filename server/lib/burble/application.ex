@@ -28,6 +28,9 @@ defmodule Burble.Application do
       # Persistent store (VeriSimDB)
       Burble.Store,
 
+      # Periodic VeriSimDB backups (disaster recovery)
+      Burble.Store.BackupScheduler,
+
       # PubSub for real-time events (room join/leave, voice state changes)
       {Phoenix.PubSub, name: Burble.PubSub},
 
@@ -128,8 +131,12 @@ defmodule Burble.Application do
   defp log_hardware_capabilities do
     alias Burble.Coprocessor.{ZigBackend, SNIFBackend}
 
-    zig  = if ZigBackend.available?(),  do: "ACTIVE (SIMD)",      else: "UNAVAILABLE → Elixir fallback"
-    snif = if SNIFBackend.available?(), do: "ACTIVE (WASM/SNIF)", else: "UNAVAILABLE → Zig/Elixir fallback"
+    zig = if ZigBackend.available?(), do: "ACTIVE (SIMD)", else: "UNAVAILABLE → Elixir fallback"
+
+    snif =
+      if SNIFBackend.available?(),
+        do: "ACTIVE (WASM/SNIF)",
+        else: "UNAVAILABLE → Zig/Elixir fallback"
 
     ptp_source =
       case Burble.Timing.PTP.status() do

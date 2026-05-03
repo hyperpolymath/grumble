@@ -147,7 +147,8 @@ defmodule Burble.Store do
   Returns `{:ok, invite_map}` if valid (not expired, uses remaining),
   or `{:error, :invalid_token}` / `{:error, :expired}` / `{:error, :exhausted}`.
   """
-  @spec consume_invite(String.t()) :: {:ok, map()} | {:error, :invalid_token | :expired | :exhausted}
+  @spec consume_invite(String.t()) ::
+          {:ok, map()} | {:error, :invalid_token | :expired | :exhausted}
   def consume_invite(token) do
     GenServer.call(__MODULE__, {:consume_invite, token})
   end
@@ -200,6 +201,17 @@ defmodule Burble.Store do
     GenServer.call(__MODULE__, :health)
   end
 
+  @doc """
+  List octads whose name matches `prefix` (e.g. `"user:"`, `"room_config:"`).
+
+  Used by `Burble.Store.Backup` to enumerate entities for export. Returns
+  raw octad maps so the caller can preserve every modality.
+  """
+  @spec list_by_prefix(String.t(), pos_integer()) :: {:ok, [map()]} | {:error, term()}
+  def list_by_prefix(prefix, limit \\ 10_000) do
+    GenServer.call(__MODULE__, {:list_by_prefix, prefix, limit}, 60_000)
+  end
+
   # ---------------------------------------------------------------------------
   # GenServer callbacks
   # ---------------------------------------------------------------------------
@@ -247,15 +259,16 @@ defmodule Burble.Store do
       description: "Burble user account: #{display_name}",
       metadata: %{entity_type: "burble_user"},
       document: %{
-        content: Jason.encode!(%{
-          email: String.downcase(email),
-          display_name: display_name,
-          password_hash: password_hash,
-          is_admin: is_admin,
-          mfa_enabled: mfa_enabled,
-          mfa_secret: nil,
-          last_seen_at: nil
-        }),
+        content:
+          Jason.encode!(%{
+            email: String.downcase(email),
+            display_name: display_name,
+            password_hash: password_hash,
+            is_admin: is_admin,
+            mfa_enabled: mfa_enabled,
+            mfa_secret: nil,
+            last_seen_at: nil
+          }),
         content_type: "application/json",
         language: "en",
         metadata: %{schema_version: 1}
@@ -287,16 +300,16 @@ defmodule Burble.Store do
     case VeriSimClient.Search.text(client, search_name, limit: 1) do
       {:ok, results} when is_list(results) ->
         case Enum.find(results, fn r ->
-          get_in(r, ["name"]) == search_name || get_in(r, [:name]) == search_name
-        end) do
+               get_in(r, ["name"]) == search_name || get_in(r, [:name]) == search_name
+             end) do
           nil -> {:reply, {:error, :not_found}, state}
           octad -> {:reply, {:ok, octad_to_user(octad)}, state}
         end
 
       {:ok, %{"data" => data}} when is_list(data) ->
         case Enum.find(data, fn r ->
-          get_in(r, ["name"]) == search_name || get_in(r, [:name]) == search_name
-        end) do
+               get_in(r, ["name"]) == search_name || get_in(r, [:name]) == search_name
+             end) do
           nil -> {:reply, {:error, :not_found}, state}
           octad -> {:reply, {:ok, octad_to_user(octad)}, state}
         end
@@ -402,15 +415,21 @@ defmodule Burble.Store do
 
       {:ok, %{"data" => data}} when is_list(data) ->
         case find_by_name(data, search_name) do
-          nil -> {:reply, {:error, :invalid_token}, state}
+          nil ->
+            {:reply, {:error, :invalid_token}, state}
+
           octad ->
             fields = extract_document_fields(octad)
             temporal = get_in(octad, ["temporal"]) || get_in(octad, [:temporal]) || %{}
             expires_str = temporal["timestamp"] || temporal[:timestamp]
 
             cond do
-              fields["consumed"] == true -> {:reply, {:error, :invalid_token}, state}
-              expired?(expires_str) -> {:reply, {:error, :expired}, state}
+              fields["consumed"] == true ->
+                {:reply, {:error, :invalid_token}, state}
+
+              expired?(expires_str) ->
+                {:reply, {:error, :expired}, state}
+
               true ->
                 octad_id = get_in(octad, ["id"]) || get_in(octad, [:id])
                 mark_consumed(client, octad_id, fields)
@@ -435,12 +454,13 @@ defmodule Burble.Store do
       description: "Invite token for server #{server_id}",
       metadata: %{entity_type: "burble_invite"},
       document: %{
-        content: Jason.encode!(%{
-          token: token,
-          server_id: server_id,
-          max_uses: max_uses,
-          uses: 0
-        }),
+        content:
+          Jason.encode!(%{
+            token: token,
+            server_id: server_id,
+            max_uses: max_uses,
+            uses: 0
+          }),
         content_type: "application/json"
       },
       temporal: %{
@@ -492,6 +512,7 @@ defmodule Burble.Store do
     case find_by_prefix(client, "room_config:#{room_id}") do
       {:ok, octad} ->
         id = get_in(octad, ["id"]) || get_in(octad, [:id])
+
         case VeriSimClient.Octad.update(client, id, octad_input) do
           {:ok, updated} -> {:reply, {:ok, extract_document_fields(updated)}, state}
           {:error, reason} -> {:reply, {:error, reason}, state}
@@ -533,6 +554,7 @@ defmodule Burble.Store do
     case find_by_prefix(client, "server_config:#{server_id}") do
       {:ok, octad} ->
         id = get_in(octad, ["id"]) || get_in(octad, [:id])
+
         case VeriSimClient.Octad.update(client, id, octad_input) do
           {:ok, updated} -> {:reply, {:ok, extract_document_fields(updated)}, state}
           {:error, reason} -> {:reply, {:error, reason}, state}
@@ -561,6 +583,26 @@ defmodule Burble.Store do
   end
 
   @impl true
+  def handle_call({:list_by_prefix, prefix, limit}, _from, %{client: client} = state) do
+    result =
+      case VeriSimClient.Search.text(client, prefix, limit: limit) do
+        {:ok, results} when is_list(results) ->
+          {:ok, Enum.filter(results, &name_starts_with?(&1, prefix))}
+
+        {:ok, %{"data" => data}} when is_list(data) ->
+          {:ok, Enum.filter(data, &name_starts_with?(&1, prefix))}
+
+        {:ok, _} ->
+          {:ok, []}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_cast({:record_user_event, user_id, event_type, metadata}, %{client: client} = state) do
     update_input = %{
       provenance: %{
@@ -572,7 +614,9 @@ defmodule Burble.Store do
     }
 
     case VeriSimClient.Octad.update(client, user_id, update_input) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
         Logger.warning("[Burble.Store] Failed to record event: #{inspect(reason)}")
     end
@@ -661,14 +705,21 @@ defmodule Burble.Store do
     end)
   end
 
+  defp name_starts_with?(octad, prefix) do
+    name = get_in(octad, ["name"]) || get_in(octad, [:name]) || ""
+    is_binary(name) and String.starts_with?(name, prefix)
+  end
+
   # Check if an ISO 8601 timestamp is in the past.
   defp expired?(nil), do: true
+
   defp expired?(timestamp_str) when is_binary(timestamp_str) do
     case DateTime.from_iso8601(timestamp_str) do
       {:ok, expires_at, _offset} -> DateTime.compare(DateTime.utc_now(), expires_at) == :gt
       _ -> true
     end
   end
+
   defp expired?(_), do: true
 
   # Mark a magic link octad as consumed by updating its document content.
@@ -679,6 +730,7 @@ defmodule Burble.Store do
         content_type: "application/json"
       }
     }
+
     VeriSimClient.Octad.update(client, octad_id, update_input)
   end
 

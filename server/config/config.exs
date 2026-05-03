@@ -34,6 +34,14 @@ config :burble, Burble.Store,
   auth: :none,
   timeout: 30_000
 
+# Automated VeriSimDB backups (disaster recovery).
+# Disabled by default; enabled per-environment in dev.exs / prod.exs / runtime.exs.
+config :burble, Burble.Store.BackupScheduler,
+  enabled: false,
+  interval_ms: :timer.hours(24),
+  retention_count: 14,
+  run_on_startup: false
+
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]

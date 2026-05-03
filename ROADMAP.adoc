@@ -39,8 +39,8 @@ Burble has cleared its foundational milestones. Test suite: 222+ Elixir tests + 
 * [x] **Groove Protocol:** Health Mesh inter-service probing and Feedback routing.
 * [x] **Formal Proofs:** `MediaPipeline.idr` (linear buffer consumption) and `WebRTCSignaling.idr` (JSEP transitions) implemented. **Avow attestation is data-type-only — no dependent-type enforcement at runtime yet** (Phase 1 target: hash-chain audit log).
 * [x] **Accessibility Scaffolding:** Server-side screen reader generation and persistent keyboard keybinding management.
-* [ ] **Circuit Breakers & Health Checks:** Prevent cascading failures and ensure auto-recovery.
-* [ ] **Automated Backups:** Disaster recovery for VeriSimDB state.
+* [x] **Circuit Breakers & Health Checks:** Generic `Burble.CircuitBreaker` (ETS-backed, telemetry-instrumented) extracted from the bespoke LLM breaker; `Burble.LLM.AnthropicProvider` migrated. Health endpoint (`GET /api/v1/health`) now surfaces every registered breaker's state, the WebRTC mesh, and backup-scheduler status.
+* [x] **Automated Backups:** `Burble.Store.BackupScheduler` runs `Burble.Store.Backup.run/1` on a configurable interval (default 24h, opt-in via `BURBLE_BACKUPS_ENABLED=true` in prod). Exports every `user:` / `room_config:` / `server_config:` / `invite:` / `magic:` octad to a gzipped JSONL file, prunes to a retention count (default 14).
 * [x] **Idris2 Compilation:** Fully compile remaining proofs to C headers for Zig ABI validation.
 * [x] **File Send Executable Isolation:** Implement `chmod` lockdown for file transfers.
 * [x] **Internationalisation:** Link Zig FFI API to world corpus language support (`standards/lol`). _(V-lang API layer removed 2026-04-16; Zig FFI is now the sole surface.)_
